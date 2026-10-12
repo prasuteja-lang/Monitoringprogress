@@ -1,5 +1,5 @@
 // URL Web App Apps Script (hasil Deploy > Manage deployments, berakhiran /exec).
-const API_URL = 'GANTI_DENGAN_URL_WEB_APP_ANDA';
+const API_URL = 'https://script.google.com/macros/s/AKfycbwSY2zHSIxwDTi7Y1gjjF8SSFade8xJSsjv_9tb47tSqyzx0hNiX38oIFLc1y6oql4OXQ/exec';
 
 // Pengganti google.script.run supaya script.js tetap sama persis.
 (function () {
