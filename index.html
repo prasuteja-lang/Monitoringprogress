@@ -146,6 +146,11 @@
 
     <aside id="sidebar" class="sidebar" aria-label="Menu utama">
       <div class="px-2 pb-4 text-xl font-extrabold" style="color:var(--ac)">Joy Progress</div>
+      <!-- pemilih cabang (hanya Admin) -->
+      <div id="adminPick" class="hidden px-2 pb-3">
+        <label class="block text-xs font-semibold muted mb-1" for="selCabang">Cabang</label>
+        <select id="selCabang" onchange="pilihCabangAdmin(this.value)" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
+      </div>
       <button id="nav-home" onclick="showPage('home')" class="navbtn active"><span data-ic="home"></span>Home</button>
       <button id="nav-kelas" onclick="toggleKelasMenu()" class="navbtn" aria-expanded="false"><span data-ic="users"></span>Kelas<span id="kelasChev" class="ml-auto"></span></button>
       <div id="kelasSub" class="hidden shrink-0 space-y-0.5 pl-6 pr-1 pb-1"></div>
@@ -161,7 +166,7 @@
       <div class="mt-auto space-y-1 pt-4" style="border-top:1px solid var(--line)">
         <div class="flex items-center gap-3 px-2 py-2">
           <div id="sbAvatar" class="w-9 h-9 rounded-full flex items-center justify-center font-bold" style="background:var(--acs);color:var(--ac)"></div>
-          <div class="min-w-0"><p id="sbNama" class="font-semibold text-sm truncate"></p><p class="muted text-xs">Sensei</p></div>
+          <div class="min-w-0"><p id="sbNama" class="font-semibold text-sm truncate"></p><p id="sbRole" class="muted text-xs">Sensei</p></div>
         </div>
         <button onclick="toggleTheme()" class="navbtn"><span class="themeIc"></span><span class="themeLb"></span></button>
         <button onclick="logout()" class="navbtn"><span data-ic="out"></span>Keluar</button>
@@ -187,6 +192,7 @@
           <p class="text-lg font-semibold">Selamat datang</p>
           <p class="mt-1"><span id="welcomeName" class="text-3xl sm:text-4xl font-extrabold"></span> <span class="text-lg muted">Sensei</span></p>
           <p class="mt-3 muted">本日もよろしくお願いいたします。</p>
+          <p id="adminNote" class="hidden mt-3"><span class="chip">Mode admin · hanya memantau progress</span></p>
         </section>
         <div id="kelasList" class="space-y-6"><p class="muted text-center py-8">Memuat data kelas…</p></div>
       </div>
