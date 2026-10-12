@@ -1,4 +1,4 @@
-    :root{--bg:#F1F6F5;--sf:#FFFFFF;--sf2:#F5F9F8;--ink:#1A2B29;--mute:#5E7571;--line:#D9E5E2;--ac:#2C8A7E;--acs:#DDF1EE;--acink:#FFFFFF;--onc:#FFFFFF;
+:root{--bg:#F1F6F5;--sf:#FFFFFF;--sf2:#F5F9F8;--ink:#1A2B29;--mute:#5E7571;--line:#D9E5E2;--ac:#2C8A7E;--acs:#DDF1EE;--acink:#FFFFFF;--onc:#FFFFFF;
       --h:#15803D;--hs:#E2F5E8;--i:#A16207;--is:#FFF1C9;--s:#BE185D;--ss:#FCE3EE;--t:#B91C1C;--ts:#FDE4E4}
     .dark{--bg:#0C1514;--sf:#132120;--sf2:#192A28;--ink:#E4F1EE;--mute:#8CA6A1;--line:#26413E;--ac:#5CC8B8;--acs:#1A3935;--acink:#08211E;--onc:#0C1514;
       --h:#4ADE80;--hs:#15342A;--i:#FACC15;--is:#38311A;--s:#F472B6;--ss:#3A1E2F;--t:#F87171;--ts:#3B1D1D;color-scheme:dark}
@@ -210,3 +210,9 @@
       body.sb-off .sbtoggle{left:.75rem}
       body.sb-off .sbtoggle svg{transform:rotate(180deg)}
     }
+
+    /* sidebar rapi: submenu tidak memanjang tanpa batas, jadi semua menu utama tetap terlihat */
+    #kelasSub,#rekapSub,#nilaiSub,#raportSub{max-height:min(38vh,17rem);overflow-y:auto;overscroll-behavior:contain}
+    .sidebar .navbtn{padding-top:.55rem;padding-bottom:.55rem}
+    .sidebar .subbtn span.truncate{min-width:0}
+    .subgrup{font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ac);padding:.55rem .85rem .15rem;opacity:.9}

@@ -146,10 +146,9 @@
 
     <aside id="sidebar" class="sidebar" aria-label="Menu utama">
       <div class="px-2 pb-4 text-xl font-extrabold" style="color:var(--ac)">Joy Progress</div>
-      <!-- pemilih cabang (hanya Admin) -->
-      <div id="adminPick" class="hidden px-2 pb-3">
-        <label class="block text-xs font-semibold muted mb-1" for="selCabang">Cabang</label>
-        <select id="selCabang" onchange="pilihCabangAdmin(this.value)" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
+      <div id="adminCabangBox" class="hidden px-1 pb-3">
+        <label for="adminCabang" class="block text-xs font-semibold muted mb-1">Cabang (mode admin)</label>
+        <select id="adminCabang" onchange="pilihAdminCabang(this.value)" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></select>
       </div>
       <button id="nav-home" onclick="showPage('home')" class="navbtn active"><span data-ic="home"></span>Home</button>
       <button id="nav-kelas" onclick="toggleKelasMenu()" class="navbtn" aria-expanded="false"><span data-ic="users"></span>Kelas<span id="kelasChev" class="ml-auto"></span></button>

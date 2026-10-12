@@ -1,4 +1,6 @@
-    let currentSensei = null;
+let currentSensei = null;
+    let isAdmin = false, adminCabang = '', homeRes = null;   // akun Admin (wilayah = Admin): hanya memantau, boleh pilih cabang
+    const CABANG_ADMIN = ['tangerang', 'bandung', 'brebes', 'cirebon', 'semarang', 'sukabumi', 'tegal', 'yogyakarta', 'manado'];
     const SESI = ['午前', '午後'];
     let sesiAktif = new Date().getHours() < 12 ? SESI[0] : SESI[1];
     let sesiHome = sesiAktif;
@@ -216,12 +218,33 @@
       document.getElementById('sbNama').textContent = currentSensei.nama;
       document.getElementById('sbAvatar').textContent = String(currentSensei.nama || '?').charAt(0).toUpperCase();
       document.getElementById('tanggalAbsen').value = todayLocal();
+      aturModeAdmin();
       loadHome();
+    }
+
+    // Akun Admin: tanpa menu Absen / isi absen / isi catatan; ada pemilih cabang di sidebar.
+    function aturModeAdmin() {
+      isAdmin = !!currentSensei && String(currentSensei.wilayah || '').trim().toLowerCase() === 'admin';
+      if (!isAdmin) adminCabang = '';
+      document.getElementById('nav-absen').classList.toggle('hidden', isAdmin);
+      document.getElementById('adminCabangBox').classList.toggle('hidden', !isAdmin);
+      document.getElementById('adminNote').classList.toggle('hidden', !isAdmin);
+      document.getElementById('sbRole').textContent = isAdmin ? 'Admin · mode pantau' : 'Sensei';
+      if (isAdmin) {
+        document.getElementById('adminCabang').innerHTML = '<option value="">Semua cabang</option>' +
+          CABANG_ADMIN.map(k => '<option value="' + k + '"' + (k === adminCabang ? ' selected' : '') + '>' + k.replace(/\b\w/g, c => c.toUpperCase()) + '</option>').join('');
+      }
+    }
+    function pilihAdminCabang(v) {
+      adminCabang = v || '';
+      if (dataKelas) renderKelasMenu();
+      if (homeRes) renderHome(homeRes);
     }
 
     function logout() {
       localStorage.removeItem('joy_sensei');
       currentSensei = null;
+      homeRes = null; adminCabang = ''; aturModeAdmin();
       document.getElementById('mainApp').classList.add('hidden');
       document.getElementById('loginScreen').classList.remove('hidden');
       document.getElementById('inputIdSensei').value = '';
@@ -704,9 +727,15 @@
     const KOSONG = '(tanpa kelas)';
 
     // menu Kelas dan menu Rekap Absen memakai dropdown (kelas > batch) dan data yang sama
+    function tutupMenu(m) {
+      document.getElementById(m + 'Sub').classList.add('hidden');
+      document.getElementById(m + 'Chev').innerHTML = svg(IC.down);
+      document.getElementById('nav-' + m).setAttribute('aria-expanded', 'false');
+    }
     function toggleMenu(m) {
       const sub = document.getElementById(m + 'Sub');
       const buka = sub.classList.contains('hidden');
+      if (buka) ['kelas', 'rekap', 'nilai', 'raport'].forEach(x => { if (x !== m) tutupMenu(x); });   // satu dropdown terbuka sekali waktu
       sub.classList.toggle('hidden', !buka);
       document.getElementById(m + 'Chev').innerHTML = svg(buka ? IC.up : IC.down);
       document.getElementById('nav-' + m).setAttribute('aria-expanded', buka);
@@ -731,15 +760,20 @@
     }
 
     // [{kelas, batches:[{batch, n}]}] urutan kelas = urutan muncul di sheet, batch diurutkan angka
+    // Admin: kunci kelas = "Nama · Cabang" (unik antar cabang); nama tampilan tanpa akhiran cabang, dikelompokkan per cabang.
     function strukturKelas() {
-      const peta = {}, urut = [];
+      const peta = {}, urut = [], cab = {};
       dataKelas.siswa.forEach(s => {
+        if (isAdmin && adminCabang && String(s.cabang || '').toLowerCase() !== adminCabang) return;
         const k = s.kelas || KOSONG;
-        if (!peta[k]) { peta[k] = {}; urut.push(k); }
+        if (!peta[k]) { peta[k] = {}; urut.push(k); cab[k] = s.cabang || ''; }
         peta[k][s.batch] = (peta[k][s.batch] || 0) + 1;
       });
+      if (isAdmin) urut.sort((a, b) => cab[a].localeCompare(cab[b]));
       return urut.map(k => ({
         kelas: k,
+        cabang: cab[k],
+        nama: isAdmin ? String(k).replace(/ · [^·]*$/, '') : k,
         batches: Object.keys(peta[k]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
           .map(b => ({ batch: b, n: peta[k][b] }))
       }));
@@ -754,13 +788,16 @@
       const aktif = m === 'kelas' ? { k: kelasAktif, b: batchAktif } : m === 'rekap' ? rekapAktif : m === 'raport' ? raportAktif : nilaiAktif;
       const aktifK = aktif && aktif.k, aktifB = aktif && aktif.b;
       const pilih = m === 'kelas' ? 'pilihKelasBatch' : m === 'rekap' ? 'pilihRekapBatch' : m === 'raport' ? 'pilihRaportBatch' : 'pilihNilaiBatch';
+      let cabangSkrg = null;
       sub.innerHTML = st.map(x => {
         const buka = kelasBuka[m + '|' + x.kelas] !== false;
         const total = x.batches.reduce((t, y) => t + y.n, 0);
-        return `
+        const judulCabang = isAdmin && !adminCabang && x.cabang !== cabangSkrg ? '<p class="subgrup">' + esc(x.cabang) + '</p>' : '';
+        cabangSkrg = x.cabang;
+        return judulCabang + `
         <div>
           <button class="subbtn" data-k="${esc(x.kelas)}" data-m="${m}" onclick="toggleKelasItem(this.dataset.k, this.dataset.m)" aria-expanded="${buka}">
-            <span class="truncate">${esc(x.kelas)}</span>
+            <span class="truncate" title="${esc(x.kelas)}">${esc(x.nama)}</span>
             <span class="flex items-center gap-1 shrink-0"><small>${total}</small>${svg(buka ? IC.up : IC.down)}</span>
           </button>
           <div class="${buka ? '' : 'hidden'} pl-3 space-y-0.5">
@@ -1337,6 +1374,7 @@
       google.script.run
         .withSuccessHandler(res => {
           kelasSaya = res.kelas;
+          homeRes = res;
           sesiHome = res.sesi;
           renderHome(res);
           fillKelasSelect();
@@ -1393,7 +1431,12 @@
 
     function renderHome(res) {
       const box = document.getElementById('kelasList');
-      if (!res.kelas.length) {
+      const daftarKelas = isAdmin && adminCabang ? res.kelas.filter(k => k.grup_key === adminCabang) : res.kelas;
+      if (isAdmin && res.kelas.length && !daftarKelas.length) {
+        box.innerHTML = '<div class="card text-sm"><p class="font-semibold">Tidak ada kelas yang sedang berjalan di cabang ini.</p></div>';
+        return;
+      }
+      if (!daftarKelas.length) {
         // detail teknis hanya ke console (untuk pengecekan admin), tidak ditampilkan ke Sensei
         console.info('[Joy Progress] Tidak ada kelas aktif | login:', res.sensei_login, '| Mulai kelas:', res.diagnosa);
         box.innerHTML = '<div class="card text-sm space-y-2">' +
@@ -1405,7 +1448,7 @@
       const tgl = tanggalJepang(res.today), sesi = res.sesi;
       const pill = { S: 'c-s', I: 'c-i', TK: 'c-t' };
 
-      box.innerHTML = gabungKelas(res.kelas).map(k => {
+      box.innerHTML = gabungKelas(daftarKelas).map(k => {
         const v = x => k.sudah_absen ? x : '-';
         const tile = (c, n, l) => `<div class="tile ${c}"><b>${n}</b><span>${l}</span></div>`;
         const daftar = k.tidak_hadir_list.length
@@ -1432,7 +1475,7 @@
         // kotak catatan 午前 / 午後 (ditulis ke kolom 指摘 batch kelas di Database Kurikulum)
         const catatanBox = x => {
           const c = x.catatan;
-          if (!c || !c.bisa) return '';
+          if (isAdmin || !c || !c.bisa) return '';   // admin hanya memantau: tanpa isi catatan
           const id = esc(x.id_kelas);
           const area = (sfx, lbl, isi) => `
             <div><label class="block text-xs font-semibold muted mb-1" for="cat-${id}-${sfx}">${lbl}</label>
@@ -1471,7 +1514,7 @@
             ${daftar}
           </div>
 
-          <button onclick="startAbsen('${esc(k.id_kelas)}')" class="btn">Mulai Absen Siswa</button>
+          ${isAdmin ? '' : '<button onclick="startAbsen(\'' + esc(k.id_kelas) + '\')" class="btn">Mulai Absen Siswa</button>'}
         </section>`;
       }).join('');
     }
