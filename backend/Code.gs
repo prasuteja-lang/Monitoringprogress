@@ -38,49 +38,11 @@ function colIdx_(headers, name) {
 
 // ====================== WEB APP ======================
 function doGet(e) {
-  // Frontend sekarang di GitHub Pages; Web App ini berfungsi sebagai API.
-  // Kalau file Index masih ada di project Apps Script, halaman lama tetap bisa dibuka.
-  try {
-    return HtmlService.createTemplateFromFile('Index')
-      .evaluate()
-      .setTitle('Joy Progress Monitor')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ ok: true, message: 'Joy Progress API aktif' }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-// ====================== API (dipanggil dari GitHub Pages lewat fetch) ======================
-// Hanya fungsi di daftar ini yang bisa dipanggil dari luar.
-const API_FUNCS = {
-  loginSensei: loginSensei,
-  buatAkunSensei: buatAkunSensei,
-  gantiPassword: gantiPassword,
-  getDataKelas: getDataKelas,
-  getHomeData: getHomeData,
-  getSiswaAbsen: getSiswaAbsen,
-  simpanAbsensi: simpanAbsensi,
-  getRekapAbsen: getRekapAbsen,
-  getKurikulumData: getKurikulumData,
-  simpanCatatan: simpanCatatan,
-  getSertifikasi: getSertifikasi,
-  getTimelineData: getTimelineData,
-  getRekapNilai: getRekapNilai
-};
-
-function doPost(e) {
-  let out;
-  try {
-    const req = JSON.parse(e.postData.contents);
-    const f = API_FUNCS[req.fn];
-    if (!f) throw new Error('Fungsi tidak dikenal: ' + req.fn);
-    out = { ok: true, data: f.apply(null, req.args || []) };
-  } catch (err) {
-    out = { ok: false, error: String(err && err.message ? err.message : err) };
-  }
-  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+  return HtmlService.createTemplateFromFile('Index')
+    .evaluate()
+    .setTitle('Joy Progress Monitor')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 function include(filename) {
@@ -325,6 +287,55 @@ function sesiSekarang_() {
 function isAktif_(v) { return String(v || '').trim().toLowerCase() === 'aktif'; }
 function norm_(v) { return String(v || '').trim().toLowerCase(); }
 
+// ====================== HAK AKSES (Sensei / Admin) ======================
+// Admin = baris di sheet Sensei dengan kolom "role" berisi Admin. Admin hanya MEMANTAU:
+//  - boleh melihat semua cabang (atau satu cabang pilihan),
+//  - tidak boleh menyimpan absensi / catatan (ditolak di server).
+// Sensei biasa tetap hanya melihat cabangnya sendiri (kolom wilayah_utama); pilihan cabang dari browser diabaikan.
+function ambilAkun_(idSensei) {
+  const s = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(idSensei));
+  if (!s || !isAktif_(s.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
+  return s;
+}
+function isAdmin_(s) { return norm_(s && s.role) === 'admin'; }
+
+// -> { admin, gabung, cabang: [nama cabang yang boleh dilihat] }. gabung = beberapa cabang sekaligus.
+function cakupan_(sensei, pilih) {
+  if (!isAdmin_(sensei)) {
+    const c = String(sensei.wilayah_utama || '').trim();
+    if (!c) throw new Error('Cabang akun ini belum diisi (kolom wilayah_utama)');
+    return { admin: false, gabung: false, cabang: [c] };
+  }
+  const p = kunciTab_(pilih);
+  const cocok = p ? CABANG_LIST.filter(c => kunciTab_(c) === p)[0] : '';
+  return cocok ? { admin: true, gabung: false, cabang: [cocok] }
+               : { admin: true, gabung: true, cabang: CABANG_LIST.slice() };
+}
+
+// Mode "semua cabang": nama kelas yang sama di dua cabang tidak boleh tercampur -> kunci "Nama · Cabang"
+function kelasKunci_(kelas, cabang, gabung) {
+  return gabung ? (String(kelas || '').trim() || '(tanpa kelas)') + ' · ' + cabang : kelas;
+}
+
+// Pembaca tab absen per cabang (di-cache). Untuk Admin, tab yang belum ada dilewati (dianggap kosong).
+function pembacaAbsen_(cak) {
+  const cache = {};
+  return cabang => {
+    const key = kunciTab_(cabang);
+    if (!(key in cache)) {
+      try { cache[key] = bacaAbsenTab_(cabang); }
+      catch (e) { if (!cak.admin) throw e; cache[key] = { siswa: [], blok: [], v: [], tz: tz_() }; }
+    }
+    return cache[key];
+  };
+}
+
+// Kurikulum satu kelas; kalau tab kurikulum cabangnya belum ada, pakai kurikulum kosong (khusus Admin)
+function kurikulumKelasAman_(k) {
+  try { return kurikulumKelas_(k); }
+  catch (e) { return { hari: [], kolomTanggal: {}, blok: null, kd: { v: [], blok: [], tab: '' } }; }
+}
+
 
 // ====================== AKUN SENSEI ======================
 const CABANG_LIST = ['Tangerang (BSD)', 'Bandung', 'Brebes', 'Cirebon', 'Semarang', 'Sukabumi', 'Tegal', 'Yogyakarta', 'Manado'];
@@ -442,24 +453,14 @@ function kunciTab_(cabang) {
 
 // Cabang ditentukan SERVER dari akun sensei (kolom wilayah_utama), bukan dari kiriman browser,
 // jadi sensei hanya mendapat siswa dari tab cabangnya sendiri.
-function getDataKelas(idSensei) {
-  const sensei = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(idSensei));
-  if (!sensei || !isAktif_(sensei.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
-  const cabang = String(sensei.wilayah_utama || '').trim();
-  if (!cabang) throw new Error('Cabang akun ini belum diisi (kolom wilayah_utama)');
-
-  let db;
-  try {
-    db = SpreadsheetApp.openById(ID_DB_KELAS);
-  } catch (e) {
-    throw new Error('Spreadsheet Database Kelas tidak bisa dibuka. Pastikan akun pemilik script punya akses ke spreadsheet tersebut.');
-  }
+// Baca satu tab cabang di Database Kelas -> { tab, siswa } (null kalau tab cabang itu tidak ada)
+function bacaKelasTab_(db, cabang) {
   const key = kunciTab_(cabang);
   const sheet = db.getSheets().filter(sh => sh.getName().trim().toLowerCase() === key)[0];
-  if (!sheet) throw new Error('Tab untuk cabang "' + cabang + '" tidak ditemukan di Database Kelas');
+  if (!sheet) return null;
 
   const v = sheet.getDataRange().getDisplayValues();
-  if (v.length < 2) return { success: true, cabang: cabang, siswa: [] };
+  if (v.length < 2) return { tab: sheet.getName(), siswa: [] };
 
   const H = v[0].map(h => String(h).trim());
   const GRUP_BLOK = ['Joycare', 'Joybridge', 'Joygreen', 'Joyserve']; // urutan blok dari kiri ke kanan
@@ -496,7 +497,41 @@ function getDataKelas(idSensei) {
       });
     }
   });
-  return { success: true, cabang: cabang, tab: sheet.getName(), siswa: siswa };
+  return { tab: sheet.getName(), siswa: siswa };
+}
+
+// Cabang ditentukan SERVER dari akun (wilayah_utama untuk sensei; pilihan sidebar untuk Admin), bukan dari kiriman browser.
+function getDataKelas(idSensei, pilih) {
+  const sensei = ambilAkun_(idSensei);
+  const cak = cakupan_(sensei, pilih);
+
+  let db;
+  try {
+    db = SpreadsheetApp.openById(ID_DB_KELAS);
+  } catch (e) {
+    throw new Error('Spreadsheet Database Kelas tidak bisa dibuka. Pastikan akun pemilik script punya akses ke spreadsheet tersebut.');
+  }
+
+  const siswa = [], tabs = [], peringatan = [];
+  cak.cabang.forEach(c => {
+    let t;
+    try { t = bacaKelasTab_(db, c); }
+    catch (e) { if (!cak.admin) throw e; peringatan.push(c + ': ' + e.message); return; }
+    if (!t) {
+      if (!cak.admin) throw new Error('Tab untuk cabang "' + c + '" tidak ditemukan di Database Kelas');
+      return;                                          // Admin: cabang tanpa tab dilewati
+    }
+    tabs.push(t.tab);
+    t.siswa.forEach(s => {
+      s.cabang = c;
+      s.kelas = kelasKunci_(s.kelas, c, cak.gabung);
+      siswa.push(s);
+    });
+  });
+  return {
+    success: true, cabang: cak.gabung ? 'Semua cabang' : cak.cabang[0], tab: tabs.join(', '), siswa: siswa,
+    gabung: cak.gabung, admin: cak.admin, peringatan: peringatan
+  };
 }
 
 // ====================== API ======================
@@ -508,7 +543,10 @@ function loginSensei(idSensei, password) {
       if (!isAktif_(r.status)) return { success: false, message: 'Akun sensei tidak aktif' };
       return {
         success: true,
-        sensei: { id: r.id_sensei, nama: r.nama, group: r.group, wilayah: r.wilayah_utama, status: r.status }
+        sensei: {
+          id: r.id_sensei, nama: r.nama, group: r.group, wilayah: r.wilayah_utama, status: r.status,
+          role: String(r.role || '').trim(), admin: isAdmin_(r), cabang_list: isAdmin_(r) ? CABANG_LIST : []
+        }
       };
     }
   }
@@ -613,19 +651,25 @@ function statusSiswa_(absen, s, tanggal, sesi) {
 // Semua kelas di cabang itu tampil (semua group: Joycare, Joybridge, dst), tidak difilter menurut group akun.
 // Kelas hilang dari Home setelah End_date lewat. Yang tampil hanya kelas yang SEDANG BERJALAN (Start_date <= hari ini);
 // kalau belum ada yang berjalan, kelas yang belum mulai tetap ditampilkan supaya muncul keterangan "Kelas mulai pada ...".
-function kelasSensei_(sensei) {
-  const kunci = kunciTab_(sensei.wilayah_utama);
+function kelasSensei_(sensei, cak) {
+  cak = cak || cakupan_(sensei, '');
   const today = todayStr_();
-  const semua = readSheet_(SHEET_NAMES.MULAI).filter(k => String(k.kelas || '').trim() && kunciTab_(k.cabang) === kunci);
-  const belumLewat = semua.filter(k => {
-    const end = fmtDate_(k.end_date);
-    return !end || end >= today;
+  const mulai = readSheet_(SHEET_NAMES.MULAI).filter(k => String(k.kelas || '').trim());
+  let hasil = [];
+  cak.cabang.forEach(c => {                       // aturan "berjalan / belum mulai" berlaku per cabang
+    const kunci = kunciTab_(c);
+    const semua = mulai.filter(k => kunciTab_(k.cabang) === kunci);
+    const belumLewat = semua.filter(k => {
+      const end = fmtDate_(k.end_date);
+      return !end || end >= today;
+    });
+    const berjalan = belumLewat.filter(k => {
+      const st = fmtDate_(k.start_date);
+      return !st || st <= today;
+    });
+    hasil = hasil.concat(berjalan.length ? berjalan : belumLewat);
   });
-  const berjalan = belumLewat.filter(k => {
-    const st = fmtDate_(k.start_date);
-    return !st || st <= today;
-  });
-  return berjalan.length ? berjalan : belumLewat;
+  return hasil;
 }
 
 // Batch yang sedang berjalan untuk satu baris "Mulai kelas":
@@ -644,25 +688,27 @@ function uniqBatch_(list) {
 }
 
 // Data untuk halaman Home
-function getHomeData(idSensei) {
+function getHomeData(idSensei, pilih) {
   const today = todayStr_();
-  const sensei = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(idSensei));
-  if (!sensei || !isAktif_(sensei.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
+  const sensei = ambilAkun_(idSensei);
+  const cak = cakupan_(sensei, pilih);
 
-  const kelasRows = kelasSensei_(sensei);
+  const kelasRows = kelasSensei_(sensei, cak);
   const sesi = sesiSekarang_();
   let result = [];
 
   if (kelasRows.length) {
     const liburMap = getLiburMap_();
-    const absen = bacaAbsenTab_(sensei.wilayah_utama);
+    const absenDari = pembacaAbsen_(cak);
 
     result = kelasRows.map(k => {
+      const absen = absenDari(k.cabang);
       const batches = batchBerjalan_(k, siswaKelas_(absen, k));
       const siswa = siswaKelas_(absen, k).filter(s => !batches.length || batches.indexOf(s.batch) >= 0);
-      const kurK = kurikulumKelas_(k);
+      const kurK = cak.admin ? kurikulumKelasAman_(k) : kurikulumKelas_(k);
       const info = infoHari_(k, kurK, liburMap, today);
-      const catatan = catatanHome_(kurK, batches, info);
+      // Admin hanya memantau: kotak catatan tidak dikirim
+      const catatan = cak.admin ? { bisa: false, hari: 0, terakhir: false, pagi: '', siang: '', batch: 0 } : catatanHome_(kurK, batches, info);
       const stat = siswa.map(s => ({ s: s, st: statusSiswa_(absen, s, today, sesi) }));
       const sudahAbsen = stat.some(x => x.st !== '');
       const hitung = st => stat.filter(x => x.st === st).length;
@@ -705,6 +751,7 @@ function getHomeData(idSensei) {
 
   return {
     success: true, today: today, sesi: sesi, kelas: result, diagnosa: diagnosa,
+    admin: cak.admin, cabang_list: cak.admin ? CABANG_LIST : [],
     sensei_login: sensei.id_sensei + ' | group: ' + sensei.group + ' | wilayah: ' + sensei.wilayah_utama
   };
 }
@@ -753,6 +800,8 @@ function simpanAbsensi(payload) {
   }
   if (SESI.indexOf(payload.sesi) < 0) throw new Error('Sesi tidak valid');
   if (payload.dataSiswa.some(x => !KODE_ABSEN[x.status])) throw new Error('Ada siswa yang belum dipilih statusnya');
+  const pengguna = ambilAkun_(payload.id_sensei);
+  if (isAdmin_(pengguna)) throw new Error('Akun Admin hanya bisa memantau progress, tidak bisa menyimpan absensi.');
 
   const k = readSheet_(SHEET_NAMES.MULAI).find(x => String(x._row) === String(payload.id_kelas));
   if (!k) throw new Error('Kelas tidak ditemukan di sheet Mulai kelas');
@@ -854,18 +903,20 @@ function rekapSiswa_(absen, s) {
 }
 
 // Rekap semua siswa di tab absen cabang sensei (cabang diambil dari akun, bukan dari browser)
-function getRekapAbsen(idSensei) {
-  const sensei = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(idSensei));
-  if (!sensei || !isAktif_(sensei.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
-  const absen = bacaAbsenTab_(sensei.wilayah_utama);
-  return {
-    success: true,
-    rekap: absen.siswa.map(s => {
+function getRekapAbsen(idSensei, pilih) {
+  const sensei = ambilAkun_(idSensei);
+  const cak = cakupan_(sensei, pilih);
+  const rekap = [];
+  cak.cabang.forEach(c => {
+    let absen;
+    try { absen = bacaAbsenTab_(c); } catch (e) { if (!cak.admin) throw e; return; }
+    absen.siswa.forEach(s => {
       const r = rekapSiswa_(absen, s);
-      r.key = kunciSiswa_(s.nama, s.kelas, s.batch);
-      return r;
-    })
-  };
+      r.key = kunciSiswa_(s.nama, kelasKunci_(s.kelas, c, cak.gabung), s.batch);
+      rekap.push(r);
+    });
+  });
+  return { success: true, rekap: rekap };
 }
 
 
@@ -885,14 +936,21 @@ function tanggalHari_(start, planned, liburMap) {
 
 // Isi Database Kurikulum (tab cabang sensei) + jadwal tiap kelas sensei (tanggal tiap hari, hari ini hari ke berapa).
 // Cabang diambil dari akun sensei di server. Pengajar & catatan (指摘) dibaca dari kolom batch kelas masing-masing.
-function getKurikulumData(idSensei) {
-  const sensei = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(idSensei));
-  if (!sensei || !isAktif_(sensei.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
+function getKurikulumData(idSensei, pilih) {
+  const sensei = ambilAkun_(idSensei);
+  const cak = cakupan_(sensei, pilih);
 
   const today = todayStr_();
-  const kd = bukaKurikulum_(sensei.wilayah_utama);
   const liburMap = getLiburMap_();
-  const absen = bacaAbsenTab_(sensei.wilayah_utama);
+
+  // Kurikulum acuan (isi tabel): tab cabang sensei. Admin: tab pertama yang ada di cabang terpilih.
+  let kd = null, cabangAcuan = '';
+  for (let i = 0; i < cak.cabang.length && !kd; i++) {
+    try { kd = bukaKurikulum_(cak.cabang[i]); cabangAcuan = cak.cabang[i]; }
+    catch (e) { if (!cak.admin) throw e; }
+  }
+  if (!kd) throw new Error('Tab kurikulum untuk cabang yang dipilih tidak ditemukan di Database Kurikulum');
+  const absenDari = pembacaAbsen_(cak);
 
   const salin = hari => hari.map(h => ({ hari_ke: h.hari_ke, items: h.items, pr: '' }));
   const utama = kd.blok[0] ? kd.blok[0].hari.filter(h => h.hari_ke <= UTAMA_HARI) : [];
@@ -903,31 +961,32 @@ function getKurikulumData(idSensei) {
   });
   const maksHari = Math.max.apply(null, [utama.length].concat(kd.blok.map(b => b.hari.length)));
 
-  const kelas = kelasSensei_(sensei).map(k => {
-    const kurK = kurikulumKelas_(k);
+  const kelas = kelasSensei_(sensei, cak).map(k => {
+    const kurK = cak.admin ? kurikulumKelasAman_(k) : kurikulumKelas_(k);
     const info = infoHari_(k, kurK, liburMap, today);
-    const batches = batchBerjalan_(k, siswaKelas_(absen, k));
+    const batches = batchBerjalan_(k, siswaKelas_(absenDari(k.cabang), k));
     const b = batches.join(', ');
     return {
       id_kelas: String(k._row),
       group: String(k.group || '').trim(),
       nama_kelas: String(k.kelas || '').trim(),
       batch: b,
-      label: [k.kelas, b, k.group].map(x => String(x || '').trim()).filter(Boolean).join(' · '),
+      label: [k.kelas, b, k.group, cak.gabung ? k.cabang : ''].map(x => String(x || '').trim()).filter(Boolean).join(' · '),
       start: info.start,
       hari_ke: info.hari_ke,
       status: info.status,
       libur_ket: info.libur_ket,
       selesai: info.selesai,
       tanggal: info.start ? tanggalHari_(info.start, maksHari + KUR_GRUP_OFFSET, liburMap) : {},
-      catatan: catatanBatch_(kd, kurK.blok, noBatch_(batches[0]))
+      catatan: catatanBatch_(kurK.kd, kurK.blok, noBatch_(batches[0]))
     };
   });
 
   return {
     success: true,
     today: today,
-    cabang: String(sensei.wilayah_utama || '').trim(),
+    cabang: cak.gabung ? 'Semua cabang' : cak.cabang[0],
+    tab_cabang: cabangAcuan,
     planned: utama.length,
     hari: salin(utama),
     kelas: kelas,
@@ -945,9 +1004,9 @@ const KUR_GRUP_OFFSET = 0;
 // Hanya boleh untuk kelas milik akun sensei, dan hanya sampai hari yang sudah berjalan.
 function simpanCatatan(p) {
   p = p || {};
-  const sensei = readSheet_(SHEET_NAMES.SENSEI).find(r => norm_(r.id_sensei) === norm_(p.id_sensei));
-  if (!sensei || !isAktif_(sensei.status)) throw new Error('Akun sensei tidak ditemukan atau tidak aktif');
-  const k = kelasSensei_(sensei).filter(x => String(x._row) === String(p.id_kelas))[0];
+  const sensei = ambilAkun_(p.id_sensei);
+  if (isAdmin_(sensei)) throw new Error('Akun Admin hanya bisa memantau progress, tidak bisa menyimpan catatan.');
+  const k = kelasSensei_(sensei, cakupan_(sensei, '')).filter(x => String(x._row) === String(p.id_kelas))[0];
   if (!k) throw new Error('Kelas tidak ditemukan untuk akun ini');
   const hari = Number(p.hari_ke);
   if (!hari || hari < 1 || hari !== Math.floor(hari)) throw new Error('Hari ke- tidak valid');
@@ -1095,8 +1154,8 @@ function bacaSertifikatSheet_(db, namaSheet) {
 
 // Sertifikasi siswa di cabang sensei. Hanya siswa yang ada di Database Kelas cabang itu yang dikirim ke browser.
 // Siswa dicocokkan lewat NAMA, ke sheet sesuai group-nya (Joybridge -> sheet Joybridge, Joycare -> sheet Joycare).
-function getSertifikasi(idSensei) {
-  const kelas = getDataKelas(idSensei);          // sekaligus memvalidasi akun & menentukan cabang dari server
+function getSertifikasi(idSensei, pilih) {
+  const kelas = getDataKelas(idSensei, pilih);          // sekaligus memvalidasi akun & menentukan cabang dari server
   const butuh = {};
   kelas.siswa.forEach(s => {
     const g = norm_(s.group);
@@ -1321,39 +1380,57 @@ function bacaNilaiTab_(sheet) {
 
 // Nilai siswa di cabang sensei. Cabang ditentukan server dari akun; siswa dicocokkan lewat NAMA ke Database Kelas
 // (lebih disukai yang group & batch-nya sama). Yang dikirim ke browser hanya siswa yang ada di Database Kelas cabang itu.
-function getRekapNilai(idSensei) {
-  const kelas = getDataKelas(idSensei);           // sekaligus memvalidasi akun & menentukan cabang dari server
+function getRekapNilai(idSensei, pilih) {
+  const cak = cakupan_(ambilAkun_(idSensei), pilih);
+  const kelas = getDataKelas(idSensei, pilih);    // sekaligus memvalidasi akun & menentukan cabang dari server
   let db;
   try {
     db = SpreadsheetApp.openById(ID_DB_NILAI);
   } catch (e) {
     throw new Error('Spreadsheet Database Nilai tidak bisa dibuka. Pastikan akun pemilik script punya akses ke spreadsheet tersebut.');
   }
-  const key = kunciTab_(kelas.cabang);
-  const sheet = db.getSheets().filter(sh => sh.getName().trim().toLowerCase() === key)[0];
-  if (!sheet) return { success: true, cabang: kelas.cabang, ada: false, tab: '', grup: [], blok: [], nilai: {} };
 
-  const t = bacaNilaiTab_(sheet);
-  const idx = {};
-  t.blok.forEach((b, bi) => b.baris.forEach(r => { const k = normNama_(r.nama); (idx[k] = idx[k] || []).push({ bi: bi, r: r }); }));
+  // satu tab per cabang; blok semua tab digabung (indeks blok global), siswa dicari lewat "cabang|nama"
+  const blok = [], idx = {}, tabs = [], hitungGrup = {};
+  cak.cabang.forEach(c => {
+    const key = kunciTab_(c);
+    const sheet = db.getSheets().filter(sh => sh.getName().trim().toLowerCase() === key)[0];
+    if (!sheet) return;
+    tabs.push(sheet.getName());
+    const t = bacaNilaiTab_(sheet);
+    t.blok.forEach(b => {
+      const bi = blok.length;
+      blok.push({ kolom: b.kolom.map(k => ({ label: k.label, parent: k.parent, leaf: k.leaf, maks: k.maks, col: k.i })) });
+      b.baris.forEach(r => { const kk = key + '|' + normNama_(r.nama); (idx[kk] = idx[kk] || []).push({ bi: bi, r: r }); });
+    });
+    t.grup.forEach(g => {
+      const gk = g.nama.toLowerCase();
+      if (!hitungGrup[gk]) hitungGrup[gk] = { nama: g.nama, n: 0 };
+      hitungGrup[gk].n += g.n;
+    });
+  });
+  if (!tabs.length) return { success: true, cabang: kelas.cabang, ada: false, tab: '', grup: [], blok: [], nilai: {} };
 
   const nilai = {};
   kelas.siswa.forEach(s => {
-    const cand = idx[normNama_(s.nama)];
+    const cand = idx[kunciTab_(s.cabang) + '|' + normNama_(s.nama)];
     if (!cand) return;
     const g = norm_(s.group), bt = norm_(s.batch);
-    const pilih = cand.filter(x => norm_(x.r.group) === g && norm_(x.r.batch) === bt)[0] ||
-                  cand.filter(x => norm_(x.r.group) === g)[0] || cand[0];
-    nilai[kunciSiswa_(s.nama, s.kelas, s.batch === '(tanpa batch)' ? '' : s.batch)] = { b: pilih.bi, g: pilih.r.group, v: pilih.r.nilai };
+    const pilihan = cand.filter(x => norm_(x.r.group) === g && norm_(x.r.batch) === bt)[0] ||
+                    cand.filter(x => norm_(x.r.group) === g)[0] || cand[0];
+    nilai[kunciSiswa_(s.nama, s.kelas, s.batch === '(tanpa batch)' ? '' : s.batch)] = { b: pilihan.bi, g: pilihan.r.group, v: pilihan.r.nilai };
   });
+
+  const urutGrup = g => { const i = GRUP_NILAI.map(x => x.toLowerCase()).indexOf(g); return i < 0 ? 99 : i; };
+  const grup = Object.keys(hitungGrup).sort((a, b) => urutGrup(a) - urutGrup(b) || a.localeCompare(b)).map(g => hitungGrup[g]);
 
   return {
     success: true,
     cabang: kelas.cabang,
     ada: true,
-    tab: sheet.getName(),
-    grup: t.grup,
-    blok: t.blok.map(b => ({ kolom: b.kolom.map(k => ({ label: k.label, parent: k.parent, leaf: k.leaf, maks: k.maks, col: k.i })) })),
+    tab: tabs.join(', '),
+    grup: grup,
+    blok: blok,
     nilai: nilai
   };
 }
