@@ -38,11 +38,49 @@ function colIdx_(headers, name) {
 
 // ====================== WEB APP ======================
 function doGet(e) {
-  return HtmlService.createTemplateFromFile('Index')
-    .evaluate()
-    .setTitle('Joy Progress Monitor')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  // Frontend sekarang di GitHub Pages; Web App ini berfungsi sebagai API.
+  // Kalau file Index masih ada di project Apps Script, halaman lama tetap bisa dibuka.
+  try {
+    return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('Joy Progress Monitor')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, message: 'Joy Progress API aktif' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ====================== API (dipanggil dari GitHub Pages lewat fetch) ======================
+// Hanya fungsi di daftar ini yang bisa dipanggil dari luar.
+const API_FUNCS = {
+  loginSensei: loginSensei,
+  buatAkunSensei: buatAkunSensei,
+  gantiPassword: gantiPassword,
+  getDataKelas: getDataKelas,
+  getHomeData: getHomeData,
+  getSiswaAbsen: getSiswaAbsen,
+  simpanAbsensi: simpanAbsensi,
+  getRekapAbsen: getRekapAbsen,
+  getKurikulumData: getKurikulumData,
+  simpanCatatan: simpanCatatan,
+  getSertifikasi: getSertifikasi,
+  getTimelineData: getTimelineData,
+  getRekapNilai: getRekapNilai
+};
+
+function doPost(e) {
+  let out;
+  try {
+    const req = JSON.parse(e.postData.contents);
+    const f = API_FUNCS[req.fn];
+    if (!f) throw new Error('Fungsi tidak dikenal: ' + req.fn);
+    out = { ok: true, data: f.apply(null, req.args || []) };
+  } catch (err) {
+    out = { ok: false, error: String(err && err.message ? err.message : err) };
+  }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
 function include(filename) {
