@@ -1,0 +1,1652 @@
+    let currentSensei = null;
+    const SESI = ['午前', '午後'];
+    let sesiAktif = new Date().getHours() < 12 ? SESI[0] : SESI[1];
+    let sesiHome = sesiAktif;
+    let sesiTerisi = {};   // { batch: { 午前: true, 午後: true } }
+
+    function renderTabSesi() {
+      const sudah = sesiTerisi[absenBatch] || {};
+      SESI.forEach((s, i) => {
+        const b = document.getElementById('tabSesi' + i);
+        const aktif = s === sesiAktif;
+        b.className = 'px-3 py-1 rounded-full text-sm font-bold ' + (aktif ? 'sesi-on' : '');
+        b.textContent = s + (sudah[s] ? ' ✓' : '');
+        b.setAttribute('aria-pressed', aktif);
+      });
+    }
+
+    function setSesi(s) {
+      sesiAktif = s;
+      loadSiswaAbsen();
+    }
+    let kelasSaya = [];
+
+    // ---------- pop-up (pengganti alert) ----------
+    const POPUP = {
+      ok:   { judul: 'Berhasil',  warna: 'var(--h)', latar: 'var(--hs)', ikon: '<path d="M5 13l4 4L19 7"/>' },
+      err:  { judul: 'Gagal',     warna: 'var(--t)', latar: 'var(--ts)', ikon: '<path d="M6 6l12 12M18 6L6 18"/>' },
+      info: { judul: 'Perhatian', warna: 'var(--i)', latar: 'var(--is)', ikon: '<path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="9"/>' }
+    };
+    function popup(pesan, tipe, judul) {
+      const t = POPUP[tipe] || POPUP.info;
+      const ic = document.getElementById('popupIc');
+      ic.style.background = t.latar; ic.style.color = t.warna;
+      ic.innerHTML = svg(t.ikon);
+      const s = ic.firstChild; s.style.width = '1.9rem'; s.style.height = '1.9rem'; s.setAttribute('stroke-width', '2.4');
+      document.getElementById('popupJudul').textContent = judul || t.judul;
+      document.getElementById('popupPesan').textContent = pesan || '';
+      const el = document.getElementById('popup');
+      el.classList.remove('hidden'); el.classList.add('flex');
+      document.getElementById('popupOk').focus();
+    }
+    function tutupPopup() {
+      const el = document.getElementById('popup');
+      el.classList.add('hidden'); el.classList.remove('flex');
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !document.getElementById('popup').classList.contains('hidden')) tutupPopup();
+    });
+
+    // ---------- helper ----------
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function todayLocal() {
+      const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function tanggalJepang(str) {
+      const p = str.split('-').map(Number);
+      const w = '日月火水木金土'[new Date(p[0], p[1] - 1, p[2]).getDay()];
+      return String(p[0]).slice(-2) + '年' + p[1] + '月' + p[2] + '日（' + w + '）';
+    }
+
+    // ---------- lihat / sembunyikan password ----------
+    function togglePw(inputId, btn) {
+      const input = document.getElementById(inputId);
+      const tampil = input.type === 'password';
+      input.type = tampil ? 'text' : 'password';
+      btn.innerHTML = svg(tampil ? IC.eyeoff : IC.eye);
+      btn.setAttribute('aria-label', tampil ? 'Sembunyikan password' : 'Lihat password');
+    }
+    function resetPwToggles() {
+      document.querySelectorAll('.pw-toggle').forEach(b => {
+        b.innerHTML = svg(IC.eye);
+        const input = b.parentElement.querySelector('input');
+        if (input) input.type = 'password';
+      });
+    }
+
+    // ---------- tab masuk / buat akun / ganti password ----------
+    function showAuth(tab) {
+      ['login', 'daftar', 'ganti'].forEach(t => {
+        document.getElementById('panel-' + t).classList.toggle('hidden', t !== tab);
+        document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+      });
+      resetPwToggles();
+    }
+    function showMsg(el, text, ok) {
+      el.textContent = text;
+      el.style.color = ok ? 'var(--h)' : 'var(--t)';
+      el.classList.remove('hidden');
+    }
+
+    // ---------- buat akun ----------
+    function toggleGroupLain() {
+      const lain = document.getElementById('daftarGroup').value === '__lainnya';
+      const el = document.getElementById('daftarGroupLain');
+      el.classList.toggle('hidden', !lain);
+      if (lain) el.focus();
+    }
+
+    function doDaftar() {
+      const nama = document.getElementById('daftarNama').value.trim();
+      const cabang = document.getElementById('daftarCabang').value;
+      const password = document.getElementById('daftarPassword').value;
+      const pilihGroup = document.getElementById('daftarGroup').value;
+      const group = pilihGroup === '__lainnya' ? document.getElementById('daftarGroupLain').value.trim() : pilihGroup;
+      const errEl = document.getElementById('daftarError');
+      const btn = document.getElementById('btnDaftar');
+
+      if (!nama || !cabang || !password || !group) { showMsg(errEl, 'Semua kolom wajib diisi', false); return; }
+      if (password.length < 6) { showMsg(errEl, 'Password minimal 6 karakter', false); return; }
+
+      errEl.classList.add('hidden');
+      btn.disabled = true; btn.textContent = 'Memproses…';
+
+      google.script.run
+        .withSuccessHandler(res => {
+          btn.disabled = false; btn.textContent = 'Buat Akun';
+          if (!res || !res.success) { showMsg(errEl, (res && res.message) || 'Gagal membuat akun', false); return; }
+          document.getElementById('daftarIdBaru').textContent = res.id_sensei;
+          document.getElementById('daftarForm').classList.add('hidden');
+          document.getElementById('daftarSukses').classList.remove('hidden');
+          ['daftarNama', 'daftarCabang', 'daftarPassword', 'daftarGroup', 'daftarGroupLain'].forEach(x => document.getElementById(x).value = '');
+          toggleGroupLain();
+          resetPwToggles();
+        })
+        .withFailureHandler(err => {
+          btn.disabled = false; btn.textContent = 'Buat Akun';
+          showMsg(errEl, err.message || 'Gagal terhubung', false);
+        })
+        .buatAkunSensei({ nama: nama, cabang: cabang, password: password, group: group });
+    }
+
+    function keLoginDenganId() {
+      const id = document.getElementById('daftarIdBaru').textContent;
+      document.getElementById('daftarSukses').classList.add('hidden');
+      document.getElementById('daftarForm').classList.remove('hidden');
+      showAuth('login');
+      document.getElementById('inputIdSensei').value = id;
+      document.getElementById('inputPassword').focus();
+    }
+
+    // ---------- ganti password ----------
+    function doGantiPassword() {
+      const id = document.getElementById('gantiId').value.trim();
+      const lama = document.getElementById('gantiLama').value;
+      const baru = document.getElementById('gantiBaru').value;
+      const ulang = document.getElementById('gantiUlang').value;
+      const msgEl = document.getElementById('gantiMsg');
+      const btn = document.getElementById('btnGanti');
+
+      if (!id || !lama || !baru || !ulang) { showMsg(msgEl, 'Semua kolom wajib diisi', false); return; }
+      if (baru.length < 6) { showMsg(msgEl, 'Password baru minimal 6 karakter', false); return; }
+      if (baru !== ulang) { showMsg(msgEl, 'Password baru dan pengulangannya tidak sama', false); return; }
+      if (baru === lama) { showMsg(msgEl, 'Password baru harus berbeda dari password lama', false); return; }
+
+      msgEl.classList.add('hidden');
+      btn.disabled = true; btn.textContent = 'Memproses…';
+
+      google.script.run
+        .withSuccessHandler(res => {
+          btn.disabled = false; btn.textContent = 'Ganti Password';
+          showMsg(msgEl, res.message, res.success);
+          if (res.success) {
+            ['gantiLama', 'gantiBaru', 'gantiUlang'].forEach(x => document.getElementById(x).value = '');
+            resetPwToggles();
+          }
+        })
+        .withFailureHandler(err => {
+          btn.disabled = false; btn.textContent = 'Ganti Password';
+          showMsg(msgEl, err.message || 'Gagal terhubung', false);
+        })
+        .gantiPassword(id, lama, baru);
+    }
+
+    // ---------- login ----------
+    function doLogin() {
+      const id = document.getElementById('inputIdSensei').value.trim();
+      const pass = document.getElementById('inputPassword').value;
+      const errorEl = document.getElementById('loginError');
+      const btn = document.getElementById('btnLogin');
+
+      if (!id || !pass) {
+        errorEl.textContent = 'ID dan password wajib diisi';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      errorEl.classList.add('hidden');
+      btn.disabled = true; btn.textContent = 'Memeriksa…';
+
+      google.script.run
+        .withSuccessHandler(res => {
+          btn.disabled = false; btn.textContent = 'Masuk';
+          if (res.success) {
+            currentSensei = res.sensei;
+            localStorage.setItem('joy_sensei', JSON.stringify(res.sensei));
+            showMainApp();
+          } else {
+            errorEl.textContent = res.message;
+            errorEl.classList.remove('hidden');
+          }
+        })
+        .withFailureHandler(err => {
+          btn.disabled = false; btn.textContent = 'Masuk';
+          errorEl.textContent = 'Gagal terhubung: ' + err.message;
+          errorEl.classList.remove('hidden');
+        })
+        .loginSensei(id, pass);
+    }
+
+    function showMainApp() {
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+      document.getElementById('welcomeName').textContent = currentSensei.nama;
+      document.getElementById('sbNama').textContent = currentSensei.nama;
+      document.getElementById('sbAvatar').textContent = String(currentSensei.nama || '?').charAt(0).toUpperCase();
+      document.getElementById('tanggalAbsen').value = todayLocal();
+      loadHome();
+    }
+
+    function logout() {
+      localStorage.removeItem('joy_sensei');
+      currentSensei = null;
+      document.getElementById('mainApp').classList.add('hidden');
+      document.getElementById('loginScreen').classList.remove('hidden');
+      document.getElementById('inputIdSensei').value = '';
+      document.getElementById('inputPassword').value = '';
+      dataKelas = null; kelasAktif = null; batchAktif = null; rekapAktif = null; nilaiAktif = null; raportAktif = null; raportPilih = 0; raportErr = {}; dataNilai = null; nilaiErr = ''; nilaiTab = ''; kelasBuka = {}; dataRekap = null; rekapErr = ''; dataSert = null; sertErr = ''; dataKur = null; kurErr = ''; kurKelas = 0; kurTab = 'utama';
+      ['kelas', 'rekap', 'nilai', 'raport'].forEach(m => {
+        document.getElementById(m + 'Sub').classList.add('hidden');
+        document.getElementById(m + 'Sub').innerHTML = '';
+        document.getElementById(m + 'Chev').innerHTML = svg(IC.down);
+        document.getElementById('nav-' + m).setAttribute('aria-expanded', 'false');
+      });
+      document.getElementById('rekapIsi').innerHTML = '<div class="card muted text-center py-10">Pilih kelas dan batch di menu Rekap Absen</div>';
+      document.getElementById('nilaiIsi').innerHTML = '<div class="card muted text-center py-10">Pilih kelas dan batch di menu Rekap Nilai</div>';
+      document.getElementById('raportIsi').innerHTML = '<div class="card muted text-center py-10">Pilih kelas dan batch di menu Raport</div>';
+      document.getElementById('kelasIsi').innerHTML = '<div class="card muted text-center py-10">Pilih kelas dan batch di menu Kelas</div>';
+      document.getElementById('kurikulumIsi').innerHTML = '<div class="card muted text-center py-10">Memuat kurikulum…</div>';
+      showAuth('login');
+      showPage('home');
+    }
+
+    window.onload = function () {
+      initUI();
+      resetPwToggles();
+      ['inputIdSensei', 'inputPassword'].forEach(id =>
+        document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); }));
+      const saved = localStorage.getItem('joy_sensei');
+      if (saved) { currentSensei = JSON.parse(saved); showMainApp(); }
+    };
+
+    // ---------- navigasi ----------
+    const IC = {
+      home:'<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+      check:'<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>',
+      chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+      note:'<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>',
+      book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/>',
+      cal:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4M3 10h18"/>',
+      out:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+      sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+      moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+      menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',
+      users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+      award:'<circle cx="12" cy="8" r="6"/><path d="M15.5 13.5L17 22l-5-3-5 3 1.5-8.5"/>',
+      down:'<path d="M6 9l6 6 6-6"/>',
+      up:'<path d="M18 15l-6-6-6 6"/>',
+      eye:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+      eyeoff:'<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/>'
+    };
+    const svg = p => '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + p + '</svg>';
+
+    function applyTheme(dark) {
+      document.documentElement.classList.toggle('dark', dark);
+      try { localStorage.setItem('joy_theme', dark ? 'dark' : 'light'); } catch (e) {}
+      document.querySelectorAll('.themeIc').forEach(e => e.innerHTML = svg(dark ? IC.sun : IC.moon));
+      document.querySelectorAll('.themeLb').forEach(e => e.textContent = dark ? 'Mode terang' : 'Mode gelap');
+    }
+    function toggleTheme() { applyTheme(!document.documentElement.classList.contains('dark')); }
+    function initUI() {
+      document.querySelectorAll('[data-ic]').forEach(e => e.innerHTML = svg(IC[e.dataset.ic]));
+      document.getElementById('kelasChev').innerHTML = svg(IC.down);
+      document.getElementById('rekapChev').innerHTML = svg(IC.down);
+      document.getElementById('nilaiChev').innerHTML = svg(IC.down);
+      document.getElementById('raportChev').innerHTML = svg(IC.down);
+      applyTheme(document.documentElement.classList.contains('dark'));
+    }
+    function toggleSidebar(open) {
+      document.getElementById('sidebar').classList.toggle('open', open);
+      document.getElementById('overlay').classList.toggle('hidden', !open);
+    }
+    // sembunyikan / tampilkan menu samping di desktop (pilihan diingat)
+    function toggleSidebarDesktop(force) {
+      const off = typeof force === 'boolean' ? force : !document.body.classList.contains('sb-off');
+      document.body.classList.toggle('sb-off', off);
+      const b = document.getElementById('sbToggle');
+      if (b) { b.setAttribute('aria-expanded', String(!off)); b.setAttribute('aria-label', off ? 'Tampilkan menu' : 'Sembunyikan menu'); }
+      try { localStorage.setItem('sbOff', off ? '1' : '0'); } catch (e) {}
+    }
+    (function () { try { if (localStorage.getItem('sbOff') === '1') toggleSidebarDesktop(true); } catch (e) {} })();
+
+    function showPage(page) {
+      ['home', 'kelas', 'absen', 'rekap', 'nilai', 'raport', 'kurikulum', 'timeline'].forEach(p => {
+        document.getElementById('page-' + p).classList.toggle('hidden', p !== page);
+        document.getElementById('nav-' + p).classList.toggle('active', p === page);
+      });
+      toggleSidebar(false);
+      document.getElementById('mainWrap').style.maxWidth = page === 'kurikulum' ? '72rem' : '';   // tabel kurikulum butuh lebih lebar
+      window.scrollTo(0, 0);
+      if (page === 'kurikulum' && currentSensei) muatKurikulum();
+      if (page === 'timeline' && currentSensei) muatTimeline();
+    }
+
+    // ---------- timeline: rekap (ringkasan, segera terjadi, daftar per cabang) + kalender opsional ----------
+    // Data dihitung server dari Start_date (Nihongo 98 hari -> SSW 30 -> Mensetsu 10, hari kerja saja).
+    let dataTl = null, tlErr = '', tlCabang = '', tlSemua = false, tlFase = '', tlKalender = false, tlEvtSemua = false;
+    const TL_PX_BULAN = 120, TL_JENDELA = 30, TL_EVT_AWAL = 5;
+    const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const FASE_URUT = ['reguler', 'ssw', 'mensetsu'];
+    const FASE_TL = {
+      reguler:  { l: 'Nihongo',    c: 'var(--ac)',   cls: 'c-ac' },
+      ssw:      { l: 'SSW',        c: 'var(--s)',    cls: 'c-s' },
+      mensetsu: { l: 'Mensetsu',   c: 'var(--mute)', cls: 'c-g' },
+      belum:    { l: 'Akan mulai', c: 'var(--i)',    cls: 'c-i' }
+    };
+    const WARNA_ACARA = { belum: 'var(--ac)', ssw: 'var(--s)', mensetsu: 'var(--mute)', selesai: 'var(--h)' };
+
+    function hariKe(str) { const p = str.split('-').map(Number); return Date.UTC(p[0], p[1] - 1, p[2]) / 86400000; }
+    function tglSingkat(str) { if (!str) return '-'; const p = str.split('-').map(Number); return p[2] + ' ' + BLN[p[1] - 1]; }
+    function tglLengkap(str) { if (!str) return '-'; const p = str.split('-').map(Number); return p[2] + ' ' + BLN[p[1] - 1] + ' ' + p[0]; }
+    function kunciCab(c) { return String(c || '').replace(/\(.*?\)/g, '').trim().toLowerCase(); }
+    function selisihHari(tgl) { return hariKe(tgl) - hariKe(dataTl.today); }
+    function ketJarak(n) { return n <= 0 ? 'Hari ini' : n === 1 ? 'Besok' : n + ' hari lagi'; }
+
+    function muatTimeline(paksa) {
+      if (dataTl && !paksa) { renderTimeline(); return; }
+      tlErr = '';
+      document.getElementById('timelineIsi').innerHTML = '<div class="card muted text-center py-10">Memuat timeline…</div>';
+      google.script.run
+        .withSuccessHandler(res => {
+          dataTl = res;
+          // pemeriksaan untuk admin: End_date di sheet seharusnya sama dengan akhir fase Nihongo
+          res.kelas.filter(k => k.end_sheet && k.end_sheet !== k.fase.reguler.selesai)
+            .forEach(k => console.info('[Timeline] End_date sheet beda dengan hitungan akhir Nihongo:', k.cabang, k.kelas, k.end_sheet, '!=', k.fase.reguler.selesai));
+          renderTimeline();
+        })
+        .withFailureHandler(err => { tlErr = err.message || 'Gagal memuat timeline'; renderTimeline(); })
+        .getTimelineData(currentSensei.id);
+    }
+
+    function setTlCabang(v) { tlCabang = v; tlEvtSemua = false; renderTimeline(); }
+    function setTlSemua(v) { tlSemua = !!v; renderTimeline(); }
+    function setTlFase(f) { tlFase = (tlFase === f) ? '' : f; renderTimeline(); }
+    function setTlKalender() { tlKalender = !tlKalender; renderTimeline(); }
+    function setTlEvtSemua() { tlEvtSemua = !tlEvtSemua; renderTimeline(); }
+
+    // jumlah hari kerja yang sudah terlewati dari total (untuk bar mini)
+    function posisiTotal(k) {
+      const d = dataTl.durasi, s = k.status;
+      if (s.fase === 'belum') return 0;
+      if (s.fase === 'selesai') return d.REGULER + d.SSW + d.MENSETSU;
+      if (s.fase === 'reguler') return s.hari;
+      if (s.fase === 'ssw') return d.REGULER + s.hari;
+      return d.REGULER + d.SSW + s.hari;
+    }
+
+    // perubahan fase berikutnya untuk satu kelas
+    function perubahanBerikut(k) {
+      const f = k.fase;
+      switch (k.status.fase) {
+        case 'belum':    return { tgl: k.start,          teks: 'mulai ' + FASE_TL.reguler.l };
+        case 'reguler':  return { tgl: f.ssw.mulai,      teks: 'mulai SSW' };
+        case 'ssw':      return { tgl: f.mensetsu.mulai, teks: 'mulai Mensetsu' };
+        case 'mensetsu': return { tgl: f.mensetsu.selesai, teks: 'kelas selesai' };
+        default:         return null;
+      }
+    }
+
+    function ketStatusTl(k) {
+      const st = k.status;
+      if (st.fase === 'belum') return 'Mulai ' + tglLengkap(k.start);
+      if (st.fase === 'selesai') return 'Selesai ' + tglLengkap(k.fase.mensetsu.selesai);
+      return FASE_TL[st.fase].l + ' · hari ke-' + st.hari + ' dari ' + st.dari;
+    }
+
+    // semua pergantian fase dalam TL_JENDELA hari ke depan
+    function acaraTl(list) {
+      const out = [];
+      list.forEach(k => {
+        if (k.status.fase === 'selesai') return;
+        [[k.start, 'belum', 'mulai ' + FASE_TL.reguler.l], [k.fase.ssw.mulai, 'ssw', 'mulai SSW'],
+         [k.fase.mensetsu.mulai, 'mensetsu', 'mulai Mensetsu'], [k.fase.mensetsu.selesai, 'selesai', 'kelas selesai']
+        ].forEach(e => {
+          const n = selisihHari(e[0]);
+          if (n >= 0 && n <= TL_JENDELA) out.push({ tgl: e[0], n: n, k: k, fase: e[1], teks: e[2] });
+        });
+      });
+      return out.sort((a, b) => a.tgl.localeCompare(b.tgl) || a.k.cabang.localeCompare(b.k.cabang));
+    }
+
+    // bar mini: tiga segmen (Nihongo/SSW/Mensetsu) sebanding dengan durasinya, terisi sesuai progres
+    function barMini(k) {
+      const d = dataTl.durasi, tot = d.REGULER + d.SSW + d.MENSETSU, n = posisiTotal(k);
+      let off = 0;
+      return '<div class="tlmini">' + FASE_URUT.map(f => {
+        const len = d[f.toUpperCase()];
+        const isi = Math.max(0, Math.min(1, (n - off) / len)); off += len;
+        return '<div style="flex:' + len + ' 1 0;background:var(--line);position:relative"><div style="position:absolute;top:0;bottom:0;left:0;width:' + (isi * 100) + '%;background:' + FASE_TL[f].c + '"></div></div>';
+      }).join('') + '</div>';
+    }
+
+    function barisKelas(k) {
+      const s = k.status, nx = perubahanBerikut(k);
+      const warna = FASE_TL[s.fase] ? FASE_TL[s.fase].c : 'var(--mute)';
+      const nama = esc(k.kelas) + (k.group ? ' <span class="muted font-normal">(' + esc(k.group) + ')</span>' : '') +
+                   (k.batch ? ' <span class="chip" style="padding:0 .5rem">Batch ' + esc(k.batch) + '</span>' : '');
+      const kanan = nx
+        ? '<p class="text-xs font-semibold">' + esc(nx.teks) + '</p><p class="text-xs muted">' + tglLengkap(nx.tgl) + ' · ' + ketJarak(selisihHari(nx.tgl)) + '</p>'
+        : '<p class="text-xs muted">Sudah selesai</p>';
+      return '<div class="tlr"' + (s.fase === 'selesai' ? ' style="opacity:.6"' : '') + '>' +
+        '<div style="min-width:0"><p class="font-semibold text-sm">' + nama + '</p>' +
+          '<p class="text-xs mt-0.5" style="color:' + warna + ';font-weight:700">' + esc(ketStatusTl(k)) + '</p></div>' +
+        '<div class="tlm">' + barMini(k) + '</div>' +
+        '<div style="text-align:right">' + kanan + '</div></div>';
+    }
+
+    // tampilan kalender (Gantt) — opsional, di balik tombol "Lihat kalender"
+    function ganttTl(list) {
+      const mn = list.reduce((m, k) => k.start < m ? k.start : m, list[0].start);
+      const mx = list.reduce((m, k) => k.fase.mensetsu.selesai > m ? k.fase.mensetsu.selesai : m, list[0].fase.mensetsu.selesai);
+      const p0 = mn.split('-').map(Number), p1 = mx.split('-').map(Number);
+      const awal = Date.UTC(p0[0], p0[1] - 1, 1) / 86400000;
+      const akhir = Date.UTC(p1[0], p1[1], 1) / 86400000;
+      const total = akhir - awal;
+      const jmlBulan = (p1[0] - p0[0]) * 12 + (p1[1] - p0[1]) + 1;
+      const px = Math.max(jmlBulan * TL_PX_BULAN, 640);
+      const pct = x => ((x - awal) / total * 100);
+
+      let bulanHtml = '';
+      for (let i = 0; i < jmlBulan; i++) {
+        const m = p0[1] - 1 + i, y = p0[0] + Math.floor(m / 12), mm = m % 12;
+        const a = Date.UTC(y, mm, 1) / 86400000, b = Date.UTC(y, mm + 1, 1) / 86400000;
+        bulanHtml += '<div class="tlmonth" style="left:' + pct(a) + '%;width:' + ((b - a) / total * 100) + '%">' + BLN[mm] + (mm === 0 || i === 0 ? ' ' + y : '') + '</div>';
+      }
+      const hariIni = hariKe(dataTl.today);
+      const todayPct = (hariIni >= awal && hariIni < akhir) ? pct(hariIni) : null;
+
+      let html = '', cabangSkrg = null;
+      list.slice().sort((a, b) => a.cabang.localeCompare(b.cabang) || a.start.localeCompare(b.start)).forEach(k => {
+        if (k.cabang !== cabangSkrg) {
+          cabangSkrg = k.cabang;
+          html += '<div style="padding-top:1rem"><span class="tlsticky font-bold" style="color:var(--ac)">' + esc(cabangSkrg || 'Tanpa cabang') + '</span></div>';
+        }
+        const f = k.fase;
+        const seg = (kunci, dari, sampai) => {
+          const l = hariKe(dari), r = hariKe(sampai);
+          return '<div class="tlseg" title="' + FASE_TL[kunci].l + ': ' + tglSingkat(f[kunci].mulai) + ' – ' + tglSingkat(f[kunci].selesai) + '" style="left:' + pct(l) + '%;width:' + ((r - l) / total * 100) + '%;background:' + FASE_TL[kunci].c + '"></div>';
+        };
+        const bar = '<div class="tltrack">' + seg('reguler', f.reguler.mulai, f.ssw.mulai) + seg('ssw', f.ssw.mulai, f.mensetsu.mulai) +
+                    seg('mensetsu', f.mensetsu.mulai, addHariStr(f.mensetsu.selesai)) + '</div>';
+        html += '<div class="tlrow"' + (k.status.fase === 'selesai' ? ' style="opacity:.6"' : '') + '><div class="tlsticky">' +
+          '<p class="font-semibold text-sm">' + esc(k.kelas) + (k.group ? ' <span class="muted font-normal">(' + esc(k.group) + ')</span>' : '') + '</p>' +
+          '<p class="muted text-xs mt-0.5">' + FASE_TL.reguler.l + ' ' + tglSingkat(f.reguler.mulai) + '–' + tglSingkat(f.reguler.selesai) +
+            ' · SSW ' + tglSingkat(f.ssw.mulai) + '–' + tglSingkat(f.ssw.selesai) +
+            ' · Mensetsu ' + tglSingkat(f.mensetsu.mulai) + '–' + tglLengkap(f.mensetsu.selesai) + '</p></div>' + bar + '</div>';
+      });
+
+      return '<div id="tlScroll" style="overflow-x:auto;margin-top:1rem;padding-bottom:.5rem"><div style="position:relative;width:' + px + 'px">' +
+        '<div style="position:relative;height:1.4rem">' + bulanHtml + '</div>' +
+        '<div style="position:relative">' + (todayPct === null ? '' : '<div class="tltoday" style="left:' + todayPct + '%"></div>') + html + '</div></div></div>';
+    }
+    // tanggal + 1 hari, sebagai nomor hari (untuk ujung segmen terakhir)
+    function addHariStr(str) { const n = hariKe(str) + 1; const d = new Date(n * 86400000); return d.getUTCFullYear() + '-' + (d.getUTCMonth() + 1) + '-' + d.getUTCDate(); }
+
+    function renderTimeline() {
+      const box = document.getElementById('timelineIsi');
+      if (tlErr) {
+        box.innerHTML = '<div class="card text-center space-y-3"><p class="text-sm" style="color:var(--t)">Gagal memuat timeline: ' + esc(tlErr) + '</p>' +
+          '<button onclick="muatTimeline(true)" class="btn" style="max-width:14rem">Coba lagi</button></div>';
+        return;
+      }
+      if (!dataTl) return;
+
+      const d = dataTl.durasi, saya = kunciCab(dataTl.cabang_saya);
+      const cabangAda = [...new Set(dataTl.kelas.map(k => k.cabang).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      if (tlCabang && cabangAda.indexOf(tlCabang) < 0) tlCabang = '';
+      const dasar = dataTl.kelas.filter(k => !tlCabang || k.cabang === tlCabang);      // sesuai filter cabang
+      const aktif = dasar.filter(k => k.status.fase !== 'selesai');
+      const hitung = f => aktif.filter(k => k.status.fase === f).length;
+
+      // ---- kartu 1: judul, filter, ringkasan angka ----
+      const tile = f => '<button type="button" onclick="setTlFase(\'' + f + '\')" class="tile tilebtn ' + FASE_TL[f].cls + (tlFase === f ? ' on' : '') + '"><b>' + hitung(f) + '</b><span>' +
+                        (f === 'belum' ? 'Akan mulai' : FASE_TL[f].l + (f === 'reguler' ? ' ' + d.REGULER + ' hari' : f === 'ssw' ? ' ' + d.SSW + ' hari' : ' ' + d.MENSETSU + ' hari')) + '</span></button>';
+      const kartu1 =
+        '<div class="card">' +
+          '<div class="flex flex-wrap items-start justify-between gap-3">' +
+            '<div><p class="text-lg font-bold">Timeline kelas</p><p class="muted text-sm">Ringkasan kelas semua cabang · hari belajar saja (Sabtu, Minggu, libur tidak dihitung)</p></div>' +
+            '<button type="button" onclick="muatTimeline(true)" class="chip shrink-0" style="cursor:pointer;color:var(--ac)">Muat ulang</button>' +
+          '</div>' +
+          '<div class="flex flex-wrap items-center gap-3 mt-4">' +
+            '<select onchange="setTlCabang(this.value)" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">' +
+              '<option value="">Semua cabang</option>' + cabangAda.map(c => '<option value="' + esc(c) + '"' + (c === tlCabang ? ' selected' : '') + '>' + esc(c) + '</option>').join('') +
+            '</select>' +
+            '<label class="flex items-center gap-2 text-sm"><input type="checkbox" onchange="setTlSemua(this.checked)"' + (tlSemua ? ' checked' : '') + '> Tampilkan kelas yang sudah selesai</label>' +
+          '</div>' +
+          '<div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">' + ['reguler', 'ssw', 'mensetsu', 'belum'].map(tile).join('') + '</div>' +
+          (tlFase ? '<p class="text-xs muted mt-2">Menampilkan: ' + FASE_TL[tlFase].l + ' · <button type="button" onclick="setTlFase(\'' + tlFase + '\')" style="color:var(--ac);font-weight:700">tampilkan semua</button></p>' : '') +
+        '</div>';
+
+      // ---- kartu 2: segera terjadi ----
+      const acara = acaraTl(dasar);
+      const tampil = tlEvtSemua ? acara : acara.slice(0, TL_EVT_AWAL);
+      const kartu2 =
+        '<div class="card"><p class="font-bold">Segera terjadi <span class="muted text-sm font-normal">· ' + TL_JENDELA + ' hari ke depan</span></p>' +
+        (acara.length
+          ? '<div class="mt-2">' + tampil.map(e => {
+              const p = e.tgl.split('-').map(Number);
+              return '<div class="tlevt"><div style="width:3rem;text-align:center;flex:none"><b style="font-size:1.25rem;line-height:1">' + p[2] + '</b><div class="text-xs muted">' + BLN[p[1] - 1] + '</div></div>' +
+                '<span class="tldot" style="background:' + WARNA_ACARA[e.fase] + ';margin:0;flex:none"></span>' +
+                '<div style="min-width:0;flex:1"><p class="font-semibold text-sm">' + esc(e.k.kelas) + ' <span class="muted font-normal">· ' + esc(e.k.cabang) + '</span></p><p class="text-xs muted">' + esc(e.teks) + '</p></div>' +
+                '<span class="chip shrink-0">' + ketJarak(e.n) + '</span></div>';
+            }).join('') + '</div>' +
+            (acara.length > TL_EVT_AWAL ? '<button type="button" onclick="setTlEvtSemua()" class="chip mt-2" style="cursor:pointer;color:var(--ac)">' + (tlEvtSemua ? 'Tampilkan lebih sedikit' : 'Lihat semua (' + acara.length + ')') + '</button>' : '')
+          : '<p class="muted text-sm py-4">Belum ada pergantian fase dalam ' + TL_JENDELA + ' hari ke depan.</p>') +
+        '</div>';
+
+      // ---- kartu 3: daftar per cabang ----
+      const list = dasar.filter(k => (tlFase ? k.status.fase === tlFase : (tlSemua || k.status.fase !== 'selesai')));
+      const urut = k => { const n = perubahanBerikut(k); return n ? n.tgl : '9999-99-99'; };
+      const grup = {};
+      list.forEach(k => { (grup[k.cabang || 'Tanpa cabang'] = grup[k.cabang || 'Tanpa cabang'] || []).push(k); });
+      const namaGrup = Object.keys(grup).sort((a, b) => (kunciCab(a) === saya ? -1 : 0) - (kunciCab(b) === saya ? -1 : 0) || a.localeCompare(b));
+      const kartu3 =
+        '<div class="card"><p class="font-bold">Daftar kelas</p>' +
+        '<p class="muted text-xs mt-0.5">Bar kecil: ' + FASE_URUT.map(f => '<span class="tldot" style="background:' + FASE_TL[f].c + '"></span>' + FASE_TL[f].l + ' ' + d[f.toUpperCase()]).join(' &nbsp; ') + ' hari · diurutkan dari yang paling dekat berganti fase</p>' +
+        (namaGrup.length
+          ? '<div class="space-y-3 mt-3">' + namaGrup.map(c => {
+              const isi = grup[c].slice().sort((a, b) => urut(a).localeCompare(urut(b)));
+              const buka = namaGrup.length === 1 || !!tlCabang || kunciCab(c) === saya;
+              const titik = FASE_URUT.concat(['belum']).map(f => { const n = isi.filter(k => k.status.fase === f).length; return n ? '<span class="text-xs font-semibold" style="color:' + FASE_TL[f].c + '">● ' + n + '</span>' : ''; }).join(' ');
+              return '<details class="panel"' + (buka ? ' open' : '') + '><summary class="tlsum"><span>' + esc(c) + '</span><span class="muted text-xs font-semibold">' + isi.length + ' kelas</span>' + titik + '</summary>' + isi.map(barisKelas).join('') + '</details>';
+            }).join('') + '</div>'
+          : '<p class="muted text-sm text-center py-8">' + (dataTl.kelas.length ? 'Tidak ada kelas untuk pilihan ini.' : 'Belum ada kelas dengan Start_date di sheet Mulai kelas.') + '</p>') +
+        '</div>';
+
+      // ---- kartu 4: kalender (opsional) ----
+      const tombolKal = '<div class="flex justify-center"><button type="button" onclick="setTlKalender()" class="chip" style="cursor:pointer;color:var(--ac);padding:.4rem 1rem">' + (tlKalender ? 'Sembunyikan kalender' : 'Lihat kalender') + '</button></div>';
+      const kartu4 = (tlKalender && list.length) ? '<div class="card"><p class="font-bold">Kalender</p><p class="muted text-xs">Geser ke samping untuk melihat bulan lain</p>' + ganttTl(list) + '</div>' : '';
+
+      box.innerHTML = '<div class="space-y-4">' + kartu1 + kartu2 + kartu3 + tombolKal + kartu4 + '</div>';
+
+      const sc = document.getElementById('tlScroll');
+      if (sc && sc.clientWidth > 0) {
+        const tl = sc.querySelector('.tltoday');
+        if (tl) sc.scrollLeft = Math.max(0, tl.offsetLeft - sc.clientWidth / 3);
+      }
+    }
+
+    // ---------- kurikulum (isi sheet Kurikulum; tanggal & "hari ini" dihitung dari Start_date kelas, sama dengan Home) ----------
+    let dataKur = null, kurErr = '', kurKelas = 0, kurTab = 'utama';
+    const URUT_KUR_GRUP = ['joycare', 'joybridge', 'joygreen', 'joyserve'];
+    function pilihKurTab(t) { kurTab = t || 'utama'; renderKurikulum(); window.scrollTo(0, 0); }
+
+    function muatKurikulum(paksa) {
+      if (dataKur && !paksa) { renderKurikulum(); return; }
+      kurErr = '';
+      document.getElementById('kurikulumIsi').innerHTML = '<div class="card muted text-center py-10">Memuat kurikulum…</div>';
+      google.script.run
+        .withSuccessHandler(res => { dataKur = res; if (kurKelas >= res.kelas.length) kurKelas = 0; renderKurikulum(); })
+        .withFailureHandler(err => { kurErr = err.message || 'Gagal memuat kurikulum'; renderKurikulum(); })
+        .getKurikulumData(currentSensei.id);
+    }
+
+    function pilihKurKelas(i) { kurKelas = Number(i) || 0; renderKurikulum(); }
+
+    function loncatKurHariIni() {
+      const el = document.getElementById('kurNow');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function ketStatusKur(k, planned, nowH, selesai) {
+      if (nowH) return 'Hari ini: hari ke-' + nowH + ' dari ' + planned;
+      if (k.status === 'libur') return 'Hari ini libur (' + k.libur_ket + ')';
+      if (k.status === 'belum_mulai') return 'Kelas mulai pada ' + tanggalJepang(k.start);
+      if (k.status === 'no_start') return 'Start_date kelas ini belum diisi di sheet Mulai kelas';
+      if (planned && selesai >= planned) return 'Seluruh kurikulum (' + planned + ' hari) sudah dilewati';
+      return 'Tidak ada jadwal materi untuk hari ini';
+    }
+
+    // Kurikulum utama (Bahasa Jepang) dan kurikulum tiap group memakai tampilan yang sama (tabel).
+    // Tanggal, penanda "Hari ini", pengajar & catatan mengikuti KELAS yang dipilih (bisa banyak kelas berjalan bersamaan di satu cabang).
+    function renderKurikulum() {
+      const box = document.getElementById('kurikulumIsi');
+      if (kurErr) {
+        box.innerHTML = '<div class="card text-center space-y-3"><p class="text-sm" style="color:var(--t)">Gagal memuat kurikulum: ' + esc(kurErr) + '</p>' +
+          '<button onclick="muatKurikulum(true)" class="btn" style="max-width:14rem">Coba lagi</button></div>';
+        return;
+      }
+      if (!dataKur) return;
+      const d = dataKur;
+      const g = kurTab !== 'utama' ? ((d.grup || {})[kurTab] || { nama: kurTab, ada: false, hari: [], sheet: 'Kurikulum ' + kurTab }) : null;
+      const hariList = g ? g.hari : d.hari;
+      const planned = hariList.length;
+      const offset = g ? (d.offset || 0) : 0;
+      const scope = g ? kurTab : 'utama';
+
+      // kelas yang relevan: semua kelas untuk kurikulum utama; hanya kelas dengan group itu untuk tab group
+      const daftar = d.kelas.map((x, i) => i).filter(i => !g || String(d.kelas[i].group || '').trim().toLowerCase() === kurTab);
+      if (daftar.length && daftar.indexOf(kurKelas) < 0) kurKelas = daftar[0];
+      const k = daftar.length ? d.kelas[kurKelas] : null;
+
+      const tgl = (k && k.tanggal) || {};
+      const tglHari = n => tgl[n + offset] || '';
+      let nowH = 0, selesai = 0;
+      if (k) hariList.forEach(h => {
+        const t = tglHari(h.hari_ke);
+        if (!t) return;
+        if (t === d.today) nowH = h.hari_ke; else if (t < d.today) selesai++;
+      });
+      const sisa = Math.max(0, planned - selesai - (nowH ? 1 : 0));
+
+      const tabsHtml = '<div class="flex flex-wrap gap-2 mt-4">' +
+        [['utama', 'Bahasa Jepang (utama)']].concat(URUT_KUR_GRUP.map(x => [x, d.grup && d.grup[x] ? d.grup[x].nama : x])).map(t =>
+          '<button type="button" class="chip" data-t="' + esc(t[0]) + '" onclick="pilihKurTab(this.dataset.t)" aria-pressed="' + (kurTab === t[0]) + '" style="cursor:pointer;padding:.4rem 1rem;' +
+          (kurTab === t[0] ? 'background:var(--ac);color:var(--acink);border-color:var(--ac);font-weight:800' : '') + '">' + esc(t[1]) + '</button>').join('') + '</div>';
+
+      const pilih = daftar.length > 1
+        ? '<div class="mt-4"><label class="block text-sm font-medium mb-1">Kelas</label>' +
+          '<select onchange="pilihKurKelas(this.value)" class="w-full border border-gray-300 rounded-lg px-3 py-2.5">' +
+          daftar.map(i => '<option value="' + i + '"' + (i === kurKelas ? ' selected' : '') + '>' + esc(d.kelas[i].label) + '</option>').join('') +
+          '</select></div>'
+        : '';
+
+      const ringkas = k
+        ? '<div class="flex flex-wrap items-center gap-2"><span class="chip">' + esc(k.label) + '</span>' +
+          '<span class="chip">' + esc(ketStatusKur(k, planned, nowH, selesai)) + '</span>' +
+          (nowH ? '<button type="button" onclick="loncatKurHariIni()" class="chip" style="cursor:pointer;color:var(--ac)">Lompat ke hari ini</button>' : '') + '</div>' +
+          '<div class="grid grid-cols-3 gap-2">' +
+          '<div class="tile c-h"><b>' + selesai + '</b><span>Selesai</span></div>' +
+          '<div class="tile c-i"><b>' + (nowH ? 1 : 0) + '</b><span>Hari ini</span></div>' +
+          '<div class="tile c-t"><b>' + sisa + '</b><span>Sisa</span></div></div>'
+        : '<p class="text-sm" style="color:var(--i)">' + (g
+            ? 'Tidak ada kelas ' + esc(g.nama) + ' yang aktif di cabang ini, jadi tanggal, pengajar, dan catatan tidak ditampilkan.'
+            : 'Tidak ada kelas aktif untuk akun ini, jadi tanggal dan penanda hari ini tidak ditampilkan.') + '</p>';
+
+      const kosong = t => '<span class="muted">' + t + '</span>';
+      const adaPr = hariList.some(h => h.pr);   // kolom PR hanya muncul kalau ada isinya
+      const baris = h => {
+        const now = !!nowH && h.hari_ke === nowH;
+        const t = tglHari(h.hari_ke);
+        const done = !!(k && !now && t && t < d.today);
+        const p = t ? t.split('-').map(Number) : null;
+        const items = h.items.length ? h.items : [{ sesi: '', materi: '' }];
+        const n = items.length;
+        const sama = n === 2 && items[0].materi === items[1].materi;   // materi 午前 = 午後 (sel di-merge di sheet)
+        return items.map((it, i) => {
+          const c = (k && k.catatan && k.catatan[h.hari_ke + '|' + it.sesi]) || null;
+          let tr = '<tr class="' + (now ? 'now' : '') + '"' + (now && i === 0 ? ' id="kurNow"' : '') + '>';
+          if (i === 0) {
+            tr += '<td class="c" rowspan="' + n + '"><b style="font-size:1.2rem">' + esc(h.hari_ke) + '</b>' +
+              (p ? '<div class="text-xs muted">' + p[2] + '/' + p[1] + '</div>' : '') +
+              (now ? '<div class="mt-1"><span class="pill" style="background:var(--ac);color:var(--acink)">Hari ini</span></div>'
+                : done ? '<div class="mt-1"><span class="pill c-h">Selesai</span></div>' : '') + '</td>';
+          }
+          tr += '<td class="c" style="font-weight:700">' + esc(it.sesi) + '</td>';
+          tr += '<td class="c">' + (c && c.p ? esc(c.p) : kosong('-')) + '</td>';
+          if (!sama || i === 0) tr += '<td' + (sama ? ' rowspan="2"' : '') + '>' + (it.materi ? esc(it.materi) : kosong('Belum diisi')) + '</td>';
+          tr += '<td class="cat">' + (c && c.c ? esc(c.c) : kosong('-')) + '</td>';
+          if (i === 0 && adaPr) tr += '<td class="c" rowspan="' + n + '" style="font-weight:700">' + (h.pr ? esc(h.pr) : kosong('-')) + '</td>';
+          return tr + '</tr>';
+        }).join('');
+      };
+
+      const tabel = planned
+        ? '<div class="panel" style="overflow-x:auto"><table class="kt"><thead><tr>' +
+          '<th>Hari<small>日付</small></th><th>Sesi</th><th>担当者<small>Pengajar</small></th><th>授業内容<small>Materi</small></th><th>指摘<small>Catatan</small></th>' + (adaPr ? '<th>宿題<small>PR</small></th>' : '') +
+          '</tr></thead><tbody>' + hariList.map(baris).join('') + '</tbody></table></div>'
+        : '<p class="muted text-sm">' + (g
+            ? 'Kurikulum ' + esc(g.nama) + ' belum ada di tab <b>' + esc(g.sheet) + '</b> Database Kurikulum (blok group ini belum dibuat).'
+            : 'Sheet Kurikulum masih kosong.') + '</p>';
+
+      box.innerHTML = `
+        <section class="hero">
+          <p class="text-lg font-semibold">Kurikulum${g ? ' ' + esc(g.nama) : ''}</p>
+          <h2 class="mt-1 text-3xl sm:text-4xl font-extrabold">${planned} hari</h2>
+          <p class="mt-2 muted">${esc(d.cabang)} · ${tanggalJepang(d.today)}</p>
+          ${tabsHtml}${pilih}
+        </section>
+        <section class="card mt-6 space-y-4">
+          ${ringkas}
+          ${tabel}
+          <div class="flex items-center justify-between gap-3">
+            <p class="muted text-xs leading-relaxed">Materi, pengajar, dan catatan diambil dari Database Kurikulum (tab ${esc(d.cabang)}), catatan sesuai batch kelas yang dipilih. Tanggal dihitung dari Start_date kelas (Sabtu, Minggu, dan HariLibur dilewati).</p>
+            <button type="button" onclick="muatKurikulum(true)" class="chip shrink-0" style="cursor:pointer;color:var(--ac)">Muat ulang</button>
+          </div>
+        </section>`;
+    }
+
+    // ---------- kelas (data dari Database Kelas, sesuai cabang akun) ----------
+    // Menu: Kelas > nama kelas (kolom Kelas) > batch (kolom Batch)
+    let dataKelas = null, kelasAktif = null, batchAktif = null, kelasBuka = {}, rekapAktif = null, nilaiAktif = null, raportAktif = null, raportPilih = 0, raportMode = 'satu', raportErr = {}, raportCache = null;
+    const KOSONG = '(tanpa kelas)';
+
+    // menu Kelas dan menu Rekap Absen memakai dropdown (kelas > batch) dan data yang sama
+    function toggleMenu(m) {
+      const sub = document.getElementById(m + 'Sub');
+      const buka = sub.classList.contains('hidden');
+      sub.classList.toggle('hidden', !buka);
+      document.getElementById(m + 'Chev').innerHTML = svg(buka ? IC.up : IC.down);
+      document.getElementById('nav-' + m).setAttribute('aria-expanded', buka);
+      if (buka && !dataKelas) loadDataKelas(m);
+    }
+    function toggleKelasMenu() { toggleMenu('kelas'); }
+    function toggleRekapMenu() { toggleMenu('rekap'); }
+    function toggleNilaiMenu() { toggleMenu('nilai'); }
+    function toggleRaportMenu() { toggleMenu('raport'); }
+
+    function loadDataKelas(m) {
+      m = m || 'kelas';
+      const sub = document.getElementById(m + 'Sub');
+      sub.innerHTML = '<p class="muted text-xs px-3 py-2">Memuat…</p>';
+      google.script.run
+        .withSuccessHandler(res => { dataKelas = res; renderKelasMenu(); })
+        .withFailureHandler(err => {
+          sub.innerHTML = '<p class="text-xs px-3 py-2" style="color:var(--t)">' + esc(err.message) + '</p>' +
+            '<button onclick="loadDataKelas(\'' + m + '\')" class="subbtn" style="color:var(--ac)">Coba lagi</button>';
+        })
+        .getDataKelas(currentSensei.id);
+    }
+
+    // [{kelas, batches:[{batch, n}]}] urutan kelas = urutan muncul di sheet, batch diurutkan angka
+    function strukturKelas() {
+      const peta = {}, urut = [];
+      dataKelas.siswa.forEach(s => {
+        const k = s.kelas || KOSONG;
+        if (!peta[k]) { peta[k] = {}; urut.push(k); }
+        peta[k][s.batch] = (peta[k][s.batch] || 0) + 1;
+      });
+      return urut.map(k => ({
+        kelas: k,
+        batches: Object.keys(peta[k]).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+          .map(b => ({ batch: b, n: peta[k][b] }))
+      }));
+    }
+
+    function renderKelasMenu() { renderMenu('kelas'); renderMenu('rekap'); renderMenu('nilai'); renderMenu('raport'); }
+
+    function renderMenu(m) {
+      const sub = document.getElementById(m + 'Sub');
+      const st = strukturKelas();
+      if (!st.length) { sub.innerHTML = '<p class="muted text-xs px-3 py-2">Belum ada data siswa</p>'; return; }
+      const aktif = m === 'kelas' ? { k: kelasAktif, b: batchAktif } : m === 'rekap' ? rekapAktif : m === 'raport' ? raportAktif : nilaiAktif;
+      const aktifK = aktif && aktif.k, aktifB = aktif && aktif.b;
+      const pilih = m === 'kelas' ? 'pilihKelasBatch' : m === 'rekap' ? 'pilihRekapBatch' : m === 'raport' ? 'pilihRaportBatch' : 'pilihNilaiBatch';
+      sub.innerHTML = st.map(x => {
+        const buka = kelasBuka[m + '|' + x.kelas] !== false;
+        const total = x.batches.reduce((t, y) => t + y.n, 0);
+        return `
+        <div>
+          <button class="subbtn" data-k="${esc(x.kelas)}" data-m="${m}" onclick="toggleKelasItem(this.dataset.k, this.dataset.m)" aria-expanded="${buka}">
+            <span class="truncate">${esc(x.kelas)}</span>
+            <span class="flex items-center gap-1 shrink-0"><small>${total}</small>${svg(buka ? IC.up : IC.down)}</span>
+          </button>
+          <div class="${buka ? '' : 'hidden'} pl-3 space-y-0.5">
+            ${x.batches.map(y => `
+            <button class="subbtn ${x.kelas === aktifK && y.batch === aktifB ? 'active' : ''}" data-k="${esc(x.kelas)}" data-b="${esc(y.batch)}" onclick="${pilih}(this.dataset.k, this.dataset.b)">
+              <span>${esc(y.batch)}</span><small>${y.n}</small>
+            </button>`).join('')}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function toggleKelasItem(k, m) {
+      const key = (m || 'kelas') + '|' + k;
+      kelasBuka[key] = kelasBuka[key] === false;
+      renderKelasMenu();
+    }
+
+    // ---------- rekap kehadiran (dari tab "<cabang> (absen)") ----------
+    let dataRekap = null, rekapErr = '';
+    const BATCH_KOSONG_KELAS = '(tanpa batch)';
+    function kunciSiswa(nama, kelas, batch) {
+      return [nama, kelas, batch].map(x => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase()).join('|');
+    }
+    function muatRekap() {
+      google.script.run
+        .withSuccessHandler(res => {
+          dataRekap = {}; rekapErr = '';
+          res.rekap.forEach(r => { dataRekap[r.key] = r; });
+          refreshIsi();
+        })
+        .withFailureHandler(err => {
+          rekapErr = err.message || 'Gagal memuat rekap';
+          refreshIsi();
+        })
+        .getRekapAbsen(currentSensei.id);
+    }
+    // Banner batch: kiri = batch/kelas/cabang, kanan = Jumlah total hari
+    // (hari belajar yang sudah tercatat lengkap 午前 + 午後 di tab absen; diambil yang terbanyak di antara siswa batch itu)
+    function totalHariBatch(list) {
+      if (!dataRekap) return null;
+      let m = 0;
+      list.forEach(x => {
+        const r = dataRekap[kunciSiswa(x.nama, x.kelas, x.batch === BATCH_KOSONG_KELAS ? '' : x.batch)];
+        if (r && r.hari > m) m = r.hari;
+      });
+      return m;
+    }
+    function heroBatch(kecil, judul, sub, list) {
+      const n = totalHariBatch(list);
+      return '<section class="hero"><div class="flex items-center justify-between gap-4">' +
+        '<div class="min-w-0"><p class="text-lg font-semibold">' + kecil + '</p>' +
+        '<h2 class="mt-1 text-3xl sm:text-4xl font-extrabold">' + judul + '</h2>' +
+        '<p class="mt-2 muted">' + sub + '</p></div>' +
+        '<div class="text-right shrink-0"><p class="text-4xl sm:text-5xl font-extrabold leading-none" style="color:var(--ac)">' + (n === null ? (rekapErr ? '–' : '…') : n) + '</p>' +
+        '<p class="mt-1 text-xs muted font-semibold">Jumlah total hari</p></div></div></section>';
+    }
+    function refreshIsi() {
+      if (kelasAktif !== null && batchAktif !== null) renderSertifikat(kelasAktif, batchAktif, 'kelasIsi');
+      if (rekapAktif) renderKelasIsi(rekapAktif.k, rekapAktif.b, 'rekapIsi');
+      if (raportAktif) renderRaport();
+      if (nilaiAktif) renderNilaiIsi();
+    }
+    function rekapSel(s) {
+      const r = dataRekap && dataRekap[kunciSiswa(s.nama, s.kelas, s.batch === BATCH_KOSONG_KELAS ? '' : s.batch)];
+      const n = v => (!r || !v) ? '-' : String(v).replace('.', ',');
+      const sel = (c, v) => `<td class="v ${c}${(!r || !v) ? ' nol' : ''}">${n(v)}</td>`;
+      return sel('c-h', r && r.h) + sel('c-i', r && r.i) + sel('c-s', r && r.s) + sel('c-t', r && r.tk) +
+        sel('', r && r.depan) + sel('', r && r.belakang) +
+        `<td class="tot">${r ? String(r.total).replace('.', ',') : '-'}</td>`;
+    }
+
+    function pilihKelasBatch(k, b) {
+      kelasAktif = k; batchAktif = b;
+      renderKelasMenu();
+      renderSertifikat(k, b, 'kelasIsi');
+      showPage('kelas');
+      muatSertifikat();
+      if (!dataRekap) muatRekap();
+    }
+
+    function pilihRekapBatch(k, b) {
+      rekapAktif = { k: k, b: b };
+      renderKelasMenu();
+      renderKelasIsi(k, b, 'rekapIsi');
+      showPage('rekap');
+      muatRekap();
+    }
+
+    // ---------- rekap nilai (Database Nilai; kolom & group dibaca otomatis dari sheet) ----------
+    // Satu tabel per blok (group) yang punya siswa di kelas terpilih; judul tingkat atas (mis. "Test N4 (1)") jadi tab.
+    let dataNilai = null, nilaiErr = '', nilaiTab = '';
+    function angka(str) { const t = String(str || '').trim().replace(',', '.'); return /^-?\d+(\.\d+)?$/.test(t) ? parseFloat(t) : null; }
+    function fmtAngka(x) { return (Math.round(x * 10) / 10).toString().replace('.', ','); }
+
+    function pilihNilaiBatch(k, b) {
+      nilaiAktif = { k: k, b: b };
+      nilaiTab = '';
+      renderKelasMenu();
+      renderNilaiIsi();
+      showPage('nilai');
+      muatNilai();
+      if (!dataRekap) muatRekap();
+    }
+    function muatNilai(paksa) {
+      if (dataNilai && !paksa) { renderNilaiIsi(); return; }
+      nilaiErr = '';
+      if (paksa) { dataNilai = null; renderNilaiIsi(); }
+      google.script.run
+        .withSuccessHandler(res => { dataNilai = res; renderNilaiIsi(); })
+        .withFailureHandler(err => { nilaiErr = err.message || 'Gagal memuat nilai'; renderNilaiIsi(); })
+        .getRekapNilai(currentSensei.id);
+    }
+    function setNilaiTab(t) { nilaiTab = t; renderNilaiIsi(); }
+
+    function renderNilaiIsi() {
+      if (!nilaiAktif || !dataKelas) return;
+      const k = nilaiAktif.k, b = nilaiAktif.b;
+      const box = document.getElementById('nilaiIsi');
+      const list = dataKelas.siswa.filter(s => (s.kelas || KOSONG) === k && s.batch === b);
+      const groups = [...new Set(list.map(s => s.group).filter(Boolean))];
+      const hero = heroBatch(esc(b), esc(k), esc(dataKelas.cabang) + (groups.length ? ' · ' + esc(groups.join(', ')) : '') + ' · ' + list.length + ' siswa', list);
+      const kartu = isi => hero + '<section class="card mt-6 text-center py-10">' + isi + '</section>';
+
+      if (nilaiErr) {
+        box.innerHTML = kartu('<p class="text-sm" style="color:var(--t)">Gagal memuat nilai: ' + esc(nilaiErr) + '</p><button onclick="muatNilai(true)" class="btn mt-3" style="max-width:14rem">Coba lagi</button>');
+        return;
+      }
+      if (!dataNilai) { box.innerHTML = kartu('<p class="muted">Memuat nilai…</p>'); return; }
+      if (!dataNilai.ada) {
+        box.innerHTML = kartu('<p class="font-semibold">Rekap nilai belum tersedia</p><p class="muted text-sm mt-1">Tab untuk cabang ' + esc(dataKelas.cabang) + ' belum ada di Database Nilai.</p>');
+        return;
+      }
+
+      const kunci = s => kunciSiswa(s.nama, s.kelas, s.batch === BATCH_KOSONG_KELAS ? '' : s.batch);
+      const ada = [], belum = [];
+      list.forEach(s => { const n = dataNilai.nilai[kunci(s)]; (n ? ada : belum).push({ s: s, n: n }); });
+      if (!ada.length) {
+        box.innerHTML = kartu('<p class="font-semibold">Rekap nilai belum tersedia</p><p class="muted text-sm mt-1">Belum ada nilai untuk kelas ini di tab ' + esc(dataNilai.tab) + '. Pastikan nama siswa sama dengan Database Kelas.</p>');
+        return;
+      }
+
+      // siswa dikelompokkan per blok (tiap blok punya kolom sendiri)
+      const perBlok = {};
+      ada.forEach(x => (perBlok[x.n.b] = perBlok[x.n.b] || []).push(x));
+      const blokIds = Object.keys(perBlok).map(Number).sort((a, c) => a - c);
+
+      // tab = judul tingkat atas; kolom tanpa judul atas masuk "Umum"
+      let bagian = [];
+      blokIds.forEach(bi => dataNilai.blok[bi].kolom.forEach(c => { const sec = c.parent || 'Umum'; if (bagian.indexOf(sec) < 0) bagian.push(sec); }));
+      if (bagian.indexOf('Umum') > 0) bagian = ['Umum'].concat(bagian.filter(x => x !== 'Umum'));
+      if (nilaiTab && bagian.indexOf(nilaiTab) < 0) nilaiTab = '';
+
+      const tabBar = bagian.length > 1
+        ? '<div class="flex flex-wrap items-center gap-2 mt-6">' + [''].concat(bagian).map(t =>
+            '<button type="button" class="chip" data-t="' + esc(t) + '" onclick="setNilaiTab(this.dataset.t)" style="cursor:pointer;' +
+            (nilaiTab === t ? 'background:var(--acs);color:var(--ac);font-weight:800' : '') + '">' + (t ? esc(t) : 'Semua') + '</button>').join('') +
+          '<button type="button" class="chip" onclick="muatNilai(true)" style="cursor:pointer;margin-left:auto;color:var(--ac)">Muat ulang</button></div>'
+        : '<div class="flex justify-end mt-6"><button type="button" class="chip" onclick="muatNilai(true)" style="cursor:pointer;color:var(--ac)">Muat ulang</button></div>';
+
+      const tiles = '<div class="grid grid-cols-3 gap-2 mt-4">' +
+        '<div class="tile c-g"><b>' + list.length + '</b><span>Siswa</span></div>' +
+        '<div class="tile c-ac"><b>' + ada.length + '</b><span>Ada nilai</span></div>' +
+        '<div class="tile c-i"><b>' + belum.length + '</b><span>Belum ada data</span></div></div>';
+
+      const tabel = bi => {
+        const rows = perBlok[bi];
+        const kol = dataNilai.blok[bi].kolom.map((c, j) => ({ c: c, j: j })).filter(x => !nilaiTab || (x.c.parent || 'Umum') === nilaiTab);
+        if (!kol.length) return '';
+        const gNama = [...new Set(rows.map(x => x.n.g).filter(Boolean))].join(', ');
+        const th = x => '<th>' + esc(x.c.leaf) + ((!nilaiTab && x.c.parent) ? '<small>' + esc(x.c.parent) + '</small>' : '') + (x.c.maks ? '<small>maks ' + x.c.maks + '</small>' : '') + '</th>';
+        const sel = (x, n) => {
+          const t = n.v[x.j] || '';
+          if (!t) return '<td class="v nol">-</td>';
+          const a = angka(t);
+          if (a === null) return '<td class="v">' + esc(t) + '</td>';
+          const p = a / (x.c.maks || 100) * 100;
+          return '<td class="v' + (p >= 80 ? ' c-h' : p < 50 ? ' c-t' : '') + '">' + esc(t.replace('.', ',')) + '</td>';
+        };
+        const stat = (label, fn) => '<tr><td class="nm">' + label + '</td>' + kol.map(x => {
+          const nums = rows.map(r => angka(r.n.v[x.j])).filter(n => n !== null);
+          return '<td>' + (nums.length ? fmtAngka(fn(nums)) : '-') + '</td>';
+        }).join('') + '</tr>';
+        return '<section class="card mt-4">' +
+          '<p class="font-bold mb-3">' + esc(gNama || 'Nilai') + ' <span class="muted text-sm font-normal">· ' + rows.length + ' siswa</span></p>' +
+          '<div class="panel" style="overflow-x:auto"><table class="rkt"><thead><tr><th class="nm">Nama</th>' + kol.map(th).join('') + '</tr></thead>' +
+          '<tbody>' + rows.map(r => '<tr><td class="nm"><p class="font-semibold text-sm">' + esc(r.s.nama) + '</p></td>' + kol.map(x => sel(x, r.n)).join('') + '</tr>').join('') + '</tbody>' +
+          '<tfoot>' + stat('Rata-rata', n => n.reduce((a, c) => a + c, 0) / n.length) + stat('Tertinggi', n => Math.max.apply(null, n)) + stat('Terendah', n => Math.min.apply(null, n)) + '</tfoot>' +
+          '</table></div></section>';
+      };
+
+      const belumHtml = belum.length
+        ? '<section class="card mt-4"><p class="font-bold">Belum ada data nilai</p><p class="muted text-xs mt-0.5">Nama tidak ditemukan di tab ' + esc(dataNilai.tab) + '</p>' +
+          '<div class="flex flex-wrap gap-2 mt-3">' + belum.map(x => '<span class="chip">' + esc(x.s.nama) + '</span>').join('') + '</div></section>'
+        : '';
+      const grupInfo = dataNilai.grup.length
+        ? '<p class="muted text-xs mt-4">Group terdeteksi Nilai (' + esc(dataNilai.tab) + '): ' + dataNilai.grup.map(g => esc(g.nama) + ' ' + g.n).join(' · ') + '</p>'
+        : '';
+
+      box.innerHTML = hero + tiles + tabBar + blokIds.map(tabel).join('') + belumHtml + grupInfo;
+    }
+
+    // ---------- RAPORT bahasa Jepang (gabungan nilai + kehadiran + sertifikasi) ----------
+    // Tidak butuh perubahan di Code.gs: memakai getRekapNilai, getRekapAbsen, getSertifikasi yang sudah ada.
+    const RAPORT_BULAN = 7;   // lama belajar yang dicetak di raport
+    // Bidang SSW per group (nama group dalam huruf kecil). Tambah baris baru kalau ada group baru.
+    const RAPORT_SSW = { joycare: 'SSW Kaigo', joybridge: 'SSW Kensetsu', joygreen: 'SSW Building Cleaning', joyserve: 'SSW Gaishoku' };
+    // Cadangan pembagian bidang menurut POSISI KOLOM di sheet Database Nilai (dipakai kalau judul kolom tidak memuat JFT/N5/N4/SSW).
+    // Kalau susunan sheet berubah, ubah di sini.
+    //   E = JFT · F-H = N5 · I-N = N4 · O-BC = SSW (Kaigo / Kensetsu / dst sesuai group)
+    const RAPORT_KOLOM = [
+      { dari: 'E', sampai: 'E', kat: 'JFT' },
+      { dari: 'F', sampai: 'H', kat: 'N5' },
+      { dari: 'I', sampai: 'N', kat: 'N4' },
+      { dari: 'O', sampai: 'BC', kat: 'SSW' }
+    ];
+    const hurufKeIdx = h => String(h).toUpperCase().split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;   // E -> 4
+    const idxKeHuruf = i => { let s = '', n = i + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+    // Cadangan (dipakai hanya kalau kolom di luar E-BC atau posisi kolom tidak tersedia): cocokkan dari judul kolom.
+    // Contoh aturan manual (hapus // untuk mengaktifkan): { re: /過去問題練習/, kat: 'JFT' },
+    const RAPORT_ATURAN = [
+      { re: /jft/i, kat: 'JFT' },
+      { re: /n5/i, kat: 'N5' },
+      { re: /n4/i, kat: 'N4' },
+      { re: /ssw|特定技能|kaigo|介護|kensetsu|建設|土木|設備|建築|cleaning|クリーニング|gaishoku|外食|mensetsu|面接/i, kat: 'SSW' }
+    ];
+    const RAPORT_URUT = ['JFT', 'N5', 'N4', 'SSW', 'Lainnya'];
+
+    // Urutan: 1) judul kolom (mengandung JFT / N5 / N4 / SSW dst, lihat RAPORT_ATURAN), 2) posisi kolom (RAPORT_KOLOM), 3) Lainnya.
+    function kategoriKolom(c) {
+      const t = (c.parent ? c.parent + ' ' : '') + c.leaf;
+      for (const a of RAPORT_ATURAN) if (a.re.test(t)) return a.kat;
+      if (c.col !== undefined && c.col !== null) {
+        for (const r of RAPORT_KOLOM) if (c.col >= hurufKeIdx(r.dari) && c.col <= hurufKeIdx(r.sampai)) return r.kat;
+      }
+      return 'Lainnya';
+    }
+    // Kolom ringkasan (rata-rata / total): dipakai sebagai nilai bidang HANYA kalau bidang itu tidak punya kolom tes lain.
+    const RAPORT_RINGKAS = /^(rata|total|jumlah|average|avg)|平均|合計/i;
+    const rataRata = a => a.reduce((x, y) => x + y, 0) / a.length;
+    function raporPred(p) {
+      return p >= 85 ? { h: 'A', t: 'Sangat baik', c: 'c-h' } : p >= 70 ? { h: 'B', t: 'Baik', c: 'c-ac' }
+        : p >= 55 ? { h: 'C', t: 'Cukup', c: 'c-i' } : { h: 'D', t: 'Perlu ditingkatkan', c: 'c-t' };
+    }
+
+    function raportData(s) {
+      const key = kunciSiswa(s.nama, s.kelas, s.batch === BATCH_KOSONG_KELAS ? '' : s.batch);
+      const gk = String(s.group || '').trim().toLowerCase();
+      const n = dataNilai && dataNilai.nilai ? dataNilai.nilai[key] : null;
+      const kat = RAPORT_URUT.map(k => ({ key: k, label: k === 'SSW' ? (RAPORT_SSW[gk] || 'SSW') : k === 'Lainnya' ? 'Latihan & tes lainnya' : k, items: [] }));
+      if (n) dataNilai.blok[n.b].kolom.forEach((c, j) => {
+        const a = angka(n.v[j]); if (a === null) return;
+        const mk = c.maks || 100;
+        kat[RAPORT_URUT.indexOf(kategoriKolom(c))].items.push({ label: (c.parent ? c.parent + ' · ' : '') + c.leaf, a: a, maks: mk, p: a / mk * 100, ringkas: RAPORT_RINGKAS.test(c.leaf) });
+      });
+      kat.forEach(k => {
+        const tes = k.items.filter(x => !x.ringkas);
+        if (tes.length) k.items = tes;
+        const ps = k.items.map(x => x.p);
+        if (!ps.length) return;
+        k.avg = rataRata(ps); k.min = Math.min.apply(null, ps); k.max = Math.max.apply(null, ps); k.pred = raporPred(k.avg);
+        if (ps.length >= 3) { const h = Math.floor(ps.length / 2); k.trend = rataRata(ps.slice(-h)) - rataRata(ps.slice(0, h)); }
+      });
+      const ada = kat.filter(k => k.items.length);
+      const overall = ada.length ? rataRata(ada.map(k => k.avg)) : null;
+      const r = (dataRekap && dataRekap[key]) || null;
+      let sert = null;
+      if (SERT_GRUP.includes(gk) && dataSert && dataSert.grup && dataSert.grup[gk]) {
+        const g = dataSert.grup[gk], d = g.siswa[normNama(s.nama)];
+        if (d) sert = { kolom: g.kolom, d: d };
+      }
+      return { s: s, kat: kat, overall: overall, pred: overall === null ? null : raporPred(overall), r: r,
+        hadir: r && r.hari ? r.total / r.hari * 100 : null, sert: sert, adaNilai: !!n };
+    }
+
+    function raporCatatan(x) {
+      if (x.overall === null) return 'Belum ada nilai tes yang tercatat untuk siswa ini.';
+      const f = v => fmtAngka(v) + '%';
+      const ada = x.kat.filter(k => k.items.length);
+      let t = 'Pemahaman bahasa Jepang siswa selama ' + RAPORT_BULAN + ' bulan berada pada tingkat ' + x.pred.t.toLowerCase() + ' dengan nilai rata-rata ' + f(x.overall) + '.';
+      if (ada.length >= 2) {
+        const u = ada.slice().sort((a, b) => b.avg - a.avg);
+        t += ' Bidang terkuat: ' + u[0].label + ' (' + f(u[0].avg) + '); bidang yang perlu diperkuat: ' + u[u.length - 1].label + ' (' + f(u[u.length - 1].avg) + ').';
+      }
+      if (x.hadir !== null) t += ' Tingkat kehadiran ' + f(x.hadir) + (x.hadir < 80 ? ', perlu ditingkatkan.' : '.');
+      return t;
+    }
+
+    // satu lembar raport (kertas putih, sama untuk layar dan cetak)
+    function raporHtml(x) {
+      const s = x.s, f = fmtAngka, pct = v => v == null ? '-' : f(v) + '%';
+      const tr = k => k.trend == null ? '-' : k.trend >= 3 ? '▲ Naik' : k.trend <= -3 ? '▼ Turun' : '● Stabil';
+      const bar = (p, h) => '<div class="rp-bar"><i class="rp-' + h + '" style="width:' + Math.max(0, Math.min(100, p)) + '%"></i></div>';
+      const tgl = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+
+      const barisKat = x.kat.filter(k => k.items.length || k.key !== 'Lainnya').map(k => k.items.length
+        ? '<tr><td class="l"><b>' + esc(k.label) + '</b></td><td>' + k.items.length + '</td><td><b>' + pct(k.avg) + '</b>' + bar(k.avg, k.pred.h) + '</td><td>' + f(k.min) + '–' + f(k.max) + '%</td><td>' + tr(k) + '</td><td><span class="rp-pill rp-' + k.pred.h + '">' + k.pred.h + ' · ' + k.pred.t + '</span></td></tr>'
+        : '<tr><td class="l"><b>' + esc(k.label) + '</b></td><td colspan="5" class="rp-mu">Belum ada nilai</td></tr>').join('');
+
+      const rincian = x.kat.filter(k => k.items.length).map(k =>
+        '<p class="rp-h3">' + esc(k.label) + '</p><div class="rp-chips">' + k.items.map(i => '<span title="' + esc(i.label) + '"><em>' + esc(i.label) + '</em> <b>' + f(i.a) + '/' + f(i.maks) + '</b></span>').join('') + '</div>').join('');
+
+      const r = x.r, nn = v => (r && v != null) ? String(v).replace('.', ',') : '-';
+      const hadirHtml = r
+        ? '<table class="rp-t"><thead><tr><th>Hadir</th><th>Izin</th><th>Sakit</th><th>TK</th><th>前半</th><th>後半</th><th>Total</th><th>Persentase</th></tr></thead><tbody><tr><td>' + nn(r.h) + '</td><td>' + nn(r.i) + '</td><td>' + nn(r.s) + '</td><td>' + nn(r.tk) + '</td><td>' + nn(r.depan) + '</td><td>' + nn(r.belakang) + '</td><td><b>' + nn(r.total) + '</b> / ' + r.hari + ' hari</td><td><b>' + pct(x.hadir) + '</b></td></tr></tbody></table>'
+        : '<p class="rp-mu">' + (dataRekap ? 'Data kehadiran siswa ini belum ada.' : 'Memuat data kehadiran…') + '</p>';
+
+      let sertHtml = '';
+      if (x.sert) {
+        const d = x.sert.d, hire = HIRE[d.status];
+        sertHtml = '<div class="rp-sec"><p class="rp-h2">Ujian resmi (sertifikasi)</p><table class="rp-t"><thead><tr>' + x.sert.kolom.map(k => '<th>' + esc(k.label) + '</th>').join('') + '<th>面接採用状況</th></tr></thead><tbody><tr>' +
+          x.sert.kolom.map(k => {
+            const u = d.ujian[k.key];
+            if (!u || u.status === 'belum') return '<td class="rp-mu">Belum ikut</td>';
+            if (u.status === 'lulus') return '<td><span class="rp-pill rp-A">✓ Lulus' + (u.sempurna ? ' ★' : '') + '</span>' + (u.percobaan > 1 ? '<br><small>percobaan ke-' + u.percobaan + '</small>' : '') + (u.tanggal ? '<br><small>' + esc(u.tanggal) + '</small>' : '') + '</td>';
+            return '<td><span class="rp-pill rp-D">✕ Belum lulus</span><br><small>gagal ' + u.gagal + 'x</small></td>';
+          }).join('') +
+          '<td>' + (hire ? esc(d.status) + '<br><small>' + hire[1] + '</small>' : (d.status ? esc(d.status) : '<span class="rp-mu">-</span>')) + '</td></tr></tbody></table></div>';
+      }
+
+      return '<div class="rapor">' +
+        '<div class="rp-head"><div><h2>RAPORT BAHASA JEPANG | JOYCARE INDONESIA</h2><p>日本語学習成績表 · Laporan hasil belajar ' + RAPORT_BULAN + ' bulan</p></div><div style="text-align:right"><p>' + esc(dataKelas.cabang) + '</p><p>Dicetak ' + tgl + '</p></div></div>' +
+        '<div class="rp-id"><div><span>Nama</span><b>' + esc(s.nama) + '</b></div><div><span>Group</span><b>' + esc(s.group || '-') + '</b></div><div><span>Kelas</span><b>' + esc(s.kelas || '-') + '</b></div><div><span>Batch</span><b>' + esc(s.batch === BATCH_KOSONG_KELAS ? '-' : s.batch) + '</b></div><div><span>Bidang SSW</span><b>' + esc(x.kat[3].label) + '</b></div><div><span>Lama belajar</span><b>' + RAPORT_BULAN + ' bulan</b></div></div>' +
+        '<div class="rp-sum"><div class="rp-box"><b>' + pct(x.overall) + '</b><span>Nilai rata-rata</span></div>' +
+        '<div class="rp-box ' + (x.pred ? 'rp-' + x.pred.h : '') + '"><b>' + (x.pred ? x.pred.h : '-') + '</b><span style="color:inherit">' + (x.pred ? x.pred.t : 'Belum ada nilai') + '</span></div>' +
+        '<div class="rp-box"><b>' + pct(x.hadir) + '</b><span>Kehadiran</span></div></div>' +
+        '<div class="rp-sec"><p class="rp-h2">Pemahaman bahasa Jepang</p><div style="overflow-x:auto"><table class="rp-t"><thead><tr><th>Bidang</th><th>Jumlah tes</th><th>Rata-rata</th><th>Terendah–tertinggi</th><th>Perkembangan</th><th>Predikat</th></tr></thead><tbody>' + barisKat + '</tbody></table></div></div>' +
+        (rincian ? '<div class="rp-sec"><p class="rp-h2">Rincian nilai per tes</p>' + rincian + '</div>' : '') +
+        '<div class="rp-sec"><p class="rp-h2">Kehadiran</p><div style="overflow-x:auto">' + hadirHtml + '</div></div>' +
+        sertHtml +
+        '<div class="rp-sec"><p class="rp-h2">Catatan</p><div class="rp-note">' + esc(raporCatatan(x)) + '</div>' +
+        '<div class="rp-sign"><div><p>Sensei,</p><i></i><p><b>' + esc(currentSensei ? currentSensei.nama : '') + '</b></p></div></div></div>' +
+        '</div>';
+    }
+
+    function pilihRaportBatch(k, b) {
+      raportAktif = { k: k, b: b };
+      raportPilih = 0;
+      renderKelasMenu();
+      renderRaport();
+      showPage('raport');
+      muatRaport();
+    }
+    function pilihRaportSiswa(i) {
+      raportPilih = i;
+      renderRaport();
+      const el = document.getElementById('raportDoc');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    function muatRaport(paksa) {
+      if (paksa) { dataNilai = null; dataRekap = null; dataSert = null; }
+      raportErr = {};
+      const id = currentSensei.id;
+      if (!dataNilai) google.script.run
+        .withSuccessHandler(r => { dataNilai = r; renderRaport(); })
+        .withFailureHandler(e => { raportErr.nilai = e.message || 'Gagal memuat nilai'; renderRaport(); })
+        .getRekapNilai(id);
+      if (!dataRekap) google.script.run
+        .withSuccessHandler(r => { const m = {}; r.rekap.forEach(x => { m[x.key] = x; }); dataRekap = m; renderRaport(); })
+        .withFailureHandler(e => { raportErr.rekap = e.message || 'Gagal memuat kehadiran'; renderRaport(); })
+        .getRekapAbsen(id);
+      if (!dataSert) google.script.run
+        .withSuccessHandler(r => { dataSert = r; renderRaport(); })
+        .withFailureHandler(e => { raportErr.sert = e.message || 'Gagal memuat sertifikasi'; renderRaport(); })
+        .getSertifikasi(id);
+      renderRaport();
+    }
+    function cetakRaport(mode) {
+      raportMode = mode;
+      window.print();
+      raportMode = 'satu';
+    }
+    // Ctrl+P di halaman Raport juga mencetak raport yang sedang dipilih
+    window.addEventListener('beforeprint', () => {
+      if (!raportCache || document.getElementById('page-raport').classList.contains('hidden')) return;
+      const docs = raportMode === 'semua' ? raportCache.data : [raportCache.data[raportPilih] || raportCache.data[0]];
+      document.getElementById('raportPrint').innerHTML = docs.filter(Boolean).map(x => '<div class="rp-page">' + raporHtml(x) + '</div>').join('');
+      document.body.classList.add('pr');
+    });
+    window.addEventListener('afterprint', () => {
+      document.body.classList.remove('pr');
+      document.getElementById('raportPrint').innerHTML = '';
+    });
+
+    function renderRaport() {
+      if (!raportAktif || !dataKelas) return;
+      const k = raportAktif.k, b = raportAktif.b;
+      const box = document.getElementById('raportIsi');
+      const list = dataKelas.siswa.filter(s => (s.kelas || KOSONG) === k && s.batch === b);
+      const groups = [...new Set(list.map(s => s.group).filter(Boolean))];
+      const hero = heroBatch(esc(b), 'Raport · ' + esc(k), esc(dataKelas.cabang) + (groups.length ? ' · ' + esc(groups.join(', ')) : '') + ' · ' + list.length + ' siswa', list);
+      const kartu = isi => hero + '<section class="card mt-6 text-center py-10">' + isi + '</section>';
+      if (raportErr.nilai) { box.innerHTML = kartu('<p class="text-sm" style="color:var(--t)">Gagal memuat nilai: ' + esc(raportErr.nilai) + '</p><button onclick="muatRaport(true)" class="btn mt-3" style="max-width:14rem">Coba lagi</button>'); return; }
+      if (!dataNilai) { box.innerHTML = kartu('<p class="muted">Memuat nilai…</p>'); return; }
+      if (!dataNilai.ada) { box.innerHTML = kartu('<p class="font-semibold">Raport belum tersedia</p><p class="muted text-sm mt-1">Tab untuk cabang ' + esc(dataKelas.cabang) + ' belum ada di Database Nilai.</p>'); return; }
+
+      const data = list.map(raportData);
+      raportCache = { data: data };
+      if (raportPilih >= data.length || raportPilih < 0) raportPilih = 0;
+      const ada = data.filter(x => x.adaNilai).length;
+      const sel = data[raportPilih];
+
+      const tiles = '<div class="grid grid-cols-3 gap-2 mt-4">' +
+        '<div class="tile c-g"><b>' + list.length + '</b><span>Siswa</span></div>' +
+        '<div class="tile c-ac"><b>' + ada + '</b><span>Ada nilai</span></div>' +
+        '<div class="tile c-i"><b>' + (list.length - ada) + '</b><span>Belum ada data</span></div></div>';
+
+      const status = [];
+      if (!dataRekap) status.push(raportErr.rekap ? 'kehadiran gagal dimuat (' + esc(raportErr.rekap) + ')' : 'kehadiran masih dimuat');
+      if (!dataSert) status.push(raportErr.sert ? 'sertifikasi gagal dimuat (' + esc(raportErr.sert) + ')' : 'sertifikasi masih dimuat');
+      const statusHtml = status.length ? '<p class="text-xs mt-3" style="color:var(--i)">⚠ ' + status.join(' · ') + '. Raport diperbarui otomatis setelah data siap.</p>' : '';
+
+      const bar = '<div class="flex flex-wrap items-center gap-2 mt-6">' +
+        '<button type="button" class="chip" onclick="cetakRaport(\'satu\')" style="cursor:pointer;background:var(--acs);color:var(--ac);font-weight:800">Cetak raport ini</button>' +
+        '<button type="button" class="chip" onclick="cetakRaport(\'semua\')" style="cursor:pointer;color:var(--ac)">Cetak semua (' + data.length + ')</button>' +
+        '<button type="button" class="chip" onclick="muatRaport(true)" style="cursor:pointer;margin-left:auto;color:var(--ac)">Muat ulang</button></div>';
+
+      const cel = kt => kt.items.length ? '<td class="v ' + kt.pred.c + '">' + fmtAngka(kt.avg) + '</td>' : '<td class="v nol">-</td>';
+      const ringkas = '<section class="card mt-4"><p class="font-bold mb-1">Ringkasan kelas</p><p class="muted text-xs mb-3">Nilai dalam persen (rata-rata tiap bidang). Klik nama untuk membuka raport.</p>' +
+        '<div class="panel" style="overflow-x:auto"><table class="rkt"><thead><tr><th class="nm">Nama</th><th>JFT</th><th>N5</th><th>N4</th><th>SSW</th><th>Rata-rata</th><th>Predikat</th><th>Hadir</th></tr></thead><tbody>' +
+        data.map((x, i) => '<tr class="' + (i === raportPilih ? 'sel' : '') + '" style="cursor:pointer" onclick="pilihRaportSiswa(' + i + ')"><td class="nm"><p class="font-semibold text-sm">' + esc(x.s.nama) + '</p></td>' +
+          x.kat.slice(0, 4).map(cel).join('') +
+          (x.pred ? '<td class="tot">' + fmtAngka(x.overall) + '</td><td class="v ' + x.pred.c + '">' + x.pred.h + '</td>' : '<td class="v nol">-</td><td class="v nol">-</td>') +
+          '<td class="v' + (x.hadir == null ? ' nol' : '') + '">' + (x.hadir == null ? '-' : fmtAngka(x.hadir) + '%') + '</td></tr>').join('') +
+        '</tbody></table></div>' +
+        '<p class="muted text-xs mt-3 leading-relaxed">Predikat: A ≥ 85 (sangat baik) · B ≥ 70 (baik) · C ≥ 55 (cukup) · D < 55 (perlu ditingkatkan). Nilai tiap tes dihitung sebagai skor ÷ skor maksimal; rata-rata bidang = rata-rata semua tes di bidang itu; nilai rata-rata akhir = rata-rata dari bidang yang sudah punya nilai. Urutan tes mengikuti urutan kolom di spreadsheet (kiri = lebih awal), dipakai untuk kolom Perkembangan.</p></section>';
+
+      // pemetaan kolom -> bidang, supaya mudah dicek kalau ada yang salah masuk
+      const blokIds = [...new Set(data.map(x => { const n = dataNilai.nilai[kunciSiswa(x.s.nama, x.s.kelas, x.s.batch === BATCH_KOSONG_KELAS ? '' : x.s.batch)]; return n ? n.b : -1; }).filter(i => i >= 0))];
+      const peta = '<details class="card mt-4"><summary class="font-bold" style="cursor:pointer">Pemetaan kolom nilai ke bidang</summary>' +
+        '<p class="muted text-xs mt-2">Kalau ada kolom yang masuk bidang salah, ubah <code>RAPORT_KOLOM</code> (rentang huruf kolom) di bagian script Raport pada Index.html.</p>' +
+        blokIds.map(bi => '<div class="panel mt-3" style="overflow-x:auto"><table class="rkt"><thead><tr><th class="nm">Kolom</th><th>Maks</th><th>Bidang</th></tr></thead><tbody>' +
+          dataNilai.blok[bi].kolom.map(c => '<tr><td class="nm"><p class="text-sm"><span class="muted">' + (c.col != null ? idxKeHuruf(c.col) + ' · ' : '') + '</span>' + esc((c.parent ? c.parent + ' · ' : '') + c.leaf) + '</p></td><td>' + (c.maks || '-') + '</td><td class="v">' + esc(kategoriKolom(c)) + '</td></tr>').join('') +
+          '</tbody></table></div>').join('') + '</details>';
+
+      box.innerHTML = hero + tiles + statusHtml + bar + ringkas +
+        '<div id="raportDoc" class="mt-6" style="scroll-margin-top:4.5rem">' + raporHtml(sel) + '</div>' + peta;
+    }
+
+    // ---------- sertifikasi (menu Kelas; data dari spreadsheet Database Sertifikasi) ----------
+    let dataSert = null, sertErr = '';
+    const SERT_GRUP = ['joybridge', 'joycare'];
+    const HIRE = { '採用済': ['c-h', 'Diterima'], '未採用': ['c-i', 'Belum diterima'], '退学': ['c-t', 'Keluar'] };
+    const normNama = s => String(s || '').toLowerCase().replace(/[.,'’`"]/g, '').replace(/\s+/g, ' ').trim();
+
+    function muatSertifikat() {
+      sertErr = '';
+      google.script.run
+        .withSuccessHandler(res => { dataSert = res; sertErr = ''; refreshIsi(); })
+        .withFailureHandler(err => { sertErr = err.message || 'Gagal memuat sertifikasi'; refreshIsi(); })
+        .getSertifikasi(currentSensei.id);
+    }
+
+    function selUjian(u) {
+      if (!u) return '<td class="v nol">-</td>';
+      const tgl = u.tanggal ? `<small>${esc(u.tanggal)}</small>` : '';
+      if (u.status === 'lulus') {
+        return `<td><span class="cb ok" title="Lulus">✓</span>${u.sempurna ? '<span class="bt" title="満点 (nilai sempurna)">★</span>' : ''}${u.sempurna ? '<small style="color:var(--i)">満点</small>' : ''}${u.percobaan > 1 ? `<small>lulus ke-${u.percobaan}</small>` : ''}${tgl}</td>`;
+      }
+      if (u.status === 'gagal') {
+        return `<td><span class="cb no" title="Belum lulus">✕</span><small>gagal ${u.gagal}x</small>${tgl}</td>`;
+      }
+      return `<td class="v nol">-${tgl}</td>`;
+    }
+
+    function selHire(st) {
+      if (!st) return '<td class="v nol">-</td>';
+      const h = HIRE[st];
+      return h ? `<td><span class="pill ${h[0]}">${esc(st)}</span><small>${h[1]}</small></td>` : `<td>${esc(st)}</td>`;
+    }
+
+    function bagianSert(label, key, siswa) {
+      const pesan = t => `<section class="card mt-6"><p class="muted text-sm">${t}</p></section>`;
+      const nm = esc(label || '(tanpa group)');
+      if (!SERT_GRUP.includes(key)) return pesan('Group ' + nm + ' belum memiliki data sertifikasi.');
+      if (sertErr) return pesan('<span style="color:var(--t)">Gagal memuat sertifikasi: ' + esc(sertErr) + '</span>');
+      if (!dataSert) return pesan('Memuat data sertifikasi…');
+      const g = dataSert.grup[key];
+      if (!g) return pesan('Data sertifikasi group ' + nm + ' tidak ditemukan.');
+
+      const rows = siswa.map(s => ({ s: s, d: g.siswa[normNama(s.nama)] }));
+      const ada = rows.filter(x => x.d);
+      const tdkAda = rows.length - ada.length;
+      const lulus = key2 => ada.filter(x => x.d.ujian[key2] && x.d.ujian[key2].status === 'lulus').length;
+      const diterima = ada.filter(x => x.d.status === '採用済').length;
+      const sempurna = key2 => ada.filter(x => x.d.ujian[key2] && x.d.ujian[key2].sempurna).length;
+      const tile = (n, l, p) => `<div class="tile c-h"><b>${n}<small>/${rows.length}</small></b><span>${esc(l)}</span>${p ? `<span style="display:block;color:var(--i)">★ ${p} 満点</span>` : ''}</div>`;
+      const tiles = g.kolom.map(k => tile(lulus(k.key), k.label + ' lulus', sempurna(k.key))).join('') + tile(diterima, '採用済 diterima');
+
+      return `
+        <section class="card mt-6">
+          ${groupsBanyak ? `<h3 class="font-bold mb-3">${nm}</h3>` : ''}
+          <div class="grid gap-2 mb-5" style="grid-template-columns:repeat(auto-fit,minmax(6.5rem,1fr))">${tiles}</div>
+          <div class="panel" style="overflow-x:auto">
+            <table class="rkt">
+              <thead><tr>
+                <th class="nm">Nama</th>
+                ${g.kolom.map(k => `<th>${esc(k.label)}${k.ket ? `<small>${esc(k.ket)}</small>` : ''}</th>`).join('')}
+                <th>面接採用状況<small>Status penerimaan</small></th>
+                <th>Sertifikat</th>
+              </tr></thead>
+              <tbody>${rows.map((x, i) => `
+                <tr>
+                  <td class="nm">
+                    <div class="flex items-start gap-2"><span class="muted text-xs pt-1" style="min-width:1.2rem">${i + 1}</span>
+                      <div class="min-w-0"><p class="font-semibold leading-snug">${esc(x.s.nama)}</p>
+                        ${x.d ? '' : '<div class="mt-1"><span class="chip">Belum ada di data sertifikasi</span></div>'}</div></div>
+                  </td>
+                  ${g.kolom.map(k => selUjian(x.d && x.d.ujian[k.key])).join('')}
+                  ${selHire(x.d && x.d.status)}
+                  <td class="tot">${x.d ? x.d.jumlah + '/' + g.kolom.length : '-'}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          <p class="muted text-xs mt-4 leading-relaxed">
+            ✓ = lulus · ★ = lulus dengan nilai 満点 (sempurna) · (di bawahnya: lulus pada percobaan ke-berapa, jika bukan yang pertama) · ✕ = belum lulus (jumlah percobaan gagal) · - = belum ikut ujian.
+            Tanggal = 受験日・合格日 (tanggal ujian / lulus) sesuai spreadsheet. 採用済 = diterima · 未採用 = belum diterima · 退学 = keluar.
+            Sertifikat = jumlah ujian yang sudah lulus dari ${g.kolom.length} ujian (${g.kolom.map(k => esc(k.label)).join(', ')}).
+          </p>
+          ${tdkAda ? `<p class="text-xs mt-2" style="color:var(--i)">${tdkAda} siswa tidak ditemukan di sheet ${esc(g.sheet)} (cek ejaan nama di spreadsheet sertifikasi).</p>` : ''}
+        </section>`;
+    }
+
+    let groupsBanyak = false;
+    function renderSertifikat(k, b, target) {
+      const list = dataKelas.siswa.filter(s => (s.kelas || KOSONG) === k && s.batch === b);
+      const groups = [...new Set(list.map(s => s.group).filter(Boolean))];
+      const urut = groups.length ? groups : [''];
+      groupsBanyak = urut.length > 1;
+      const bagian = urut.map(gn => bagianSert(gn, normNama(gn), list.filter(s => (s.group || '') === gn))).join('');
+
+      document.getElementById(target || 'kelasIsi').innerHTML = `
+        ${heroBatch(esc(b), esc(k), esc(dataKelas.cabang) + (groups.length ? ' · ' + esc(groups.join(', ')) : '') + ' · ' + list.length + ' siswa · Rapot sertifikat', list)}
+        ${bagian}`;
+    }
+
+    function renderKelasIsi(k, b, target) {
+      const list = dataKelas.siswa.filter(s => (s.kelas || KOSONG) === k && s.batch === b);
+      const groups = [...new Set(list.map(s => s.group).filter(Boolean))];
+      const chips = s => (groups.length > 1 && s.group ? '<span class="chip">' + esc(s.group) + '</span>' : '') +
+        s.extra.map(e => `<span class="chip">${esc(e.k)}: ${esc(e.v)}</span>`).join('');
+
+      document.getElementById(target || 'kelasIsi').innerHTML = `
+        ${heroBatch(esc(b), esc(k), esc(dataKelas.cabang) + (groups.length ? ' · ' + esc(groups.join(', ')) : '') + ' · ' + list.length + ' siswa', list)}
+        <section class="card mt-6">
+          <div class="panel" style="overflow-x:auto">
+            <table class="rkt">
+              <thead><tr>
+                <th class="nm">Nama</th>
+                <th class="c-h" style="color:var(--c)">H</th><th class="c-i" style="color:var(--c)">I</th><th class="c-s" style="color:var(--c)">S</th><th class="c-t" style="color:var(--c)">TK</th>
+                <th>前半</th><th>後半</th><th>Total</th>
+              </tr></thead>
+              <tbody>${list.map((s, i) => `
+                <tr>
+                  <td class="nm">
+                    <div class="flex items-start gap-2"><span class="muted text-xs pt-1" style="min-width:1.2rem">${i + 1}</span>
+                      <div class="min-w-0"><p class="font-semibold leading-snug">${esc(s.nama)}</p>
+                        <div class="flex flex-wrap gap-1.5 mt-1">${chips(s)}</div></div></div>
+                  </td>
+                  ${rekapSel(s)}
+                </tr>`).join('')}</tbody>
+            </table>
+          </div>
+          <p class="muted text-xs mt-4 leading-relaxed">
+            H = hadir 午前 dan 午後 · I = izin · S = sakit · TK = tanpa keterangan · 前半 = tidak hadir 午前 tetapi hadir 午後 · 後半 = hadir 午前 tetapi tidak hadir 午後.
+            Total (kehadiran) = H + 0,5 × (前半 + 後半). Hanya hari yang kedua sesinya sudah diabsen yang dihitung.
+          </p>
+          ${rekapErr ? '<p class="text-xs mt-2" style="color:var(--t)">Rekap gagal dimuat: ' + esc(rekapErr) + '</p>' : ''}
+        </section>`;
+    }
+
+    // ---------- home (sesuai mockup) ----------
+    function loadHome() {
+      google.script.run
+        .withSuccessHandler(res => {
+          kelasSaya = res.kelas;
+          sesiHome = res.sesi;
+          renderHome(res);
+          fillKelasSelect();
+        })
+        .withFailureHandler(err => {
+          document.getElementById('kelasList').innerHTML =
+            '<p class="text-red-500 text-center py-8">Gagal memuat data: ' + esc(err.message) + '</p>';
+        })
+        .getHomeData(currentSensei.id);
+    }
+
+    function materiHtml(k, sesi) {
+      const pesan = t => '<p class="muted text-sm px-4 py-4">' + t + '</p>';
+      switch (k.materi_status) {
+        case 'libur': return pesan('Hari ini libur (' + esc(k.libur_ket) + ')');
+        case 'belum_mulai': return pesan('Kelas mulai pada ' + esc(tanggalJepang(k.start_date)) + '. Belum ada materi hari ini.');
+        case 'selesai': return pesan('Seluruh kurikulum (' + k.planned_days + ' hari) sudah dilewati.');
+        case 'no_start': return pesan('Start_date kelas ini belum diisi di sheet Mulai kelas');
+        case 'no_date': return pesan('Tidak ada jadwal materi untuk tanggal ini');
+        case 'no_materi': return pesan('Materi hari ke-' + k.hari_ke + ' belum ada di sheet Kurikulum');
+      }
+      if (!k.materi.length) return pesan('Materi untuk tanggal ini belum diisi');
+      return k.materi.map(m => `
+        <div class="row ${m.sesi === sesi ? 'now' : ''}">
+          <span class="sesi">${esc(m.sesi)}</span>
+          <span class="text-sm sm:text-base leading-relaxed">${esc(m.materi)}</span>
+        </div>`).join('');
+    }
+
+    // Semua kelas yang berjalan hari ini di satu cabang digabung jadi satu kartu: semua nama kelas ditulis,
+    // dan materi hari ini ditampilkan per kelas (anggota) sesuai pertemuan masing-masing.
+    function gabungKelas(list) {
+      const peta = {}, urut = [];
+      list.forEach(k => {
+        if (!peta[k.grup_key]) { peta[k.grup_key] = []; urut.push(k.grup_key); }
+        peta[k.grup_key].push(k);
+      });
+      const uniq = a => [...new Set(a.map(x => String(x || '').trim()).filter(Boolean))];
+      const jumlah = f => (g => g.reduce((t, x) => t + (Number(x[f]) || 0), 0));
+      return urut.map(key => {
+        const g = peta[key], sum = f => jumlah(f)(g);
+        return Object.assign({}, g[0], {
+          anggota: g,
+          nama_kelas: uniq(g.map(x => x.nama_kelas)).join(', '),
+          group: uniq(g.map(x => x.group)).join(', '),
+          batch: uniq([].concat(...g.map(x => String(x.batch || '').split(',')))).join(', '),
+          total_siswa: sum('total_siswa'), hadir: sum('hadir'), izin: sum('izin'),
+          sakit: sum('sakit'), tidak_hadir: sum('tidak_hadir'),
+          sudah_absen: g.some(x => x.sudah_absen),
+          tidak_hadir_list: [].concat(...g.map(x => x.tidak_hadir_list || []))
+        });
+      });
+    }
+
+    function renderHome(res) {
+      const box = document.getElementById('kelasList');
+      if (!res.kelas.length) {
+        // detail teknis hanya ke console (untuk pengecekan admin), tidak ditampilkan ke Sensei
+        console.info('[Joy Progress] Tidak ada kelas aktif | login:', res.sensei_login, '| Mulai kelas:', res.diagnosa);
+        box.innerHTML = '<div class="card text-sm space-y-2">' +
+          '<p class="font-semibold">Maaf, data kelas Sensei belum terupdate. 🙏</p>' +
+          '<p class="muted">Silakan cek kembali sebentar lagi. Jika masih belum muncul, mohon hubungi admin.</p>' +
+          '<p class="muted">お手数をおかけしますが、よろしくお願いいたします。</p></div>';
+        return;
+      }
+      const tgl = tanggalJepang(res.today), sesi = res.sesi;
+      const pill = { S: 'c-s', I: 'c-i', TK: 'c-t' };
+
+      box.innerHTML = gabungKelas(res.kelas).map(k => {
+        const v = x => k.sudah_absen ? x : '-';
+        const tile = (c, n, l) => `<div class="tile ${c}"><b>${n}</b><span>${l}</span></div>`;
+        const daftar = k.tidak_hadir_list.length
+          ? '<ul class="mt-4 space-y-2">' + k.tidak_hadir_list.map(s =>
+              `<li class="flex items-center justify-between gap-3 text-sm"><span>${esc(s.nama)}</span><span class="pill ${pill[s.kode]}">${s.kode}</span></li>`).join('') + '</ul>'
+          : `<p class="muted text-sm mt-4">${k.sudah_absen ? 'Semua siswa hadir' : 'Sesi ' + sesi + ' belum diabsen'}</p>`;
+
+        // satu blok (progres + materi) per kelas yang berjalan; judul memakai nama group kalau ada lebih dari satu kelas
+        const banyak = k.anggota.length > 1;
+        const progres = x => `
+          <div>
+            <div class="h-1.5 rounded-full" style="background:var(--line)"><div class="progress-bar h-1.5 rounded-full" style="width:${x.progress}%;background:var(--ac)"></div></div>
+            <p class="muted text-xs mt-1.5">Selesai ${x.completed_days} dari ${x.planned_days} hari (${x.progress}%)</p>
+          </div>`;
+        const label = x => {
+          const kembar = k.anggota.filter(y => (y.group || '') === (x.group || '')).length > 1;
+          return (x.group || x.nama_kelas) + (kembar && x.group ? ' · ' + x.nama_kelas : '');
+        };
+        const materi = x => `
+          <div>
+            <div class="flex items-center justify-between mb-2"><h3 class="font-bold">Materi hari ini${banyak ? ' : ' + esc(label(x)) : ''}</h3>${x.hari_ke ? `<span class="chip">Hari ke-${x.hari_ke} / ${x.planned_days}</span>` : ''}</div>
+            <div class="panel">${materiHtml(x, sesi)}</div>
+          </div>`;
+        // kotak catatan 午前 / 午後 (ditulis ke kolom 指摘 batch kelas di Database Kurikulum)
+        const catatanBox = x => {
+          const c = x.catatan;
+          if (!c || !c.bisa) return '';
+          const id = esc(x.id_kelas);
+          const area = (sfx, lbl, isi) => `
+            <div><label class="block text-xs font-semibold muted mb-1" for="cat-${id}-${sfx}">${lbl}</label>
+            <textarea id="cat-${id}-${sfx}" rows="3" maxlength="2000" placeholder="Catatan sesi ${lbl}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">${esc(isi)}</textarea></div>`;
+          return `
+          <div>
+            <div class="flex items-center justify-between mb-2"><h3 class="font-bold">Catatan${banyak ? ' : ' + esc(label(x)) : ''}</h3><span class="chip">Hari ke-${c.hari}${c.terakhir ? ' (terakhir)' : ''}</span></div>
+            <div class="space-y-3">${area('p', '午前', c.pagi)}${area('s', '午後', c.siang)}
+              <button type="button" onclick="kirimCatatan('${id}', ${c.hari}, this)" class="btn">Kirim catatan</button></div>
+          </div>`;
+        };
+        const blokMateri = k.anggota.map(x => (banyak ? '<div class="space-y-3">' + progres(x) + materi(x) + catatanBox(x) + '</div>' : progres(x) + materi(x) + catatanBox(x)).trim()).join('');
+
+        return `
+        <section class="card space-y-6">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="text-2xl sm:text-3xl font-extrabold leading-tight">${esc(k.wilayah)}</h2>
+              <p class="mt-1 muted font-medium">${esc(k.nama_kelas)}</p>
+              <div class="flex flex-wrap gap-1.5 mt-2"><span class="chip">${esc(k.group)}</span>${k.batch ? `<span class="chip">${esc(k.batch)}</span>` : ''}</div>
+            </div>
+            <span class="chip whitespace-nowrap">${tgl}</span>
+          </div>
+
+          ${blokMateri}
+
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold">Kehadiran siswa</h3>
+              <span class="chip">${sesi}</span>
+            </div>
+            <p class="muted text-sm mb-3">Jumlah siswa: <b style="color:var(--ink)">${k.total_siswa}</b></p>
+            <div class="grid grid-cols-4 gap-2">
+              ${tile('c-h', v(k.hadir), 'Hadir')}${tile('c-i', v(k.izin), 'Izin')}${tile('c-s', v(k.sakit), 'Sakit')}${tile('c-t', v(k.tidak_hadir), 'Tanpa ket.')}
+            </div>
+            ${daftar}
+          </div>
+
+          <button onclick="startAbsen('${esc(k.id_kelas)}')" class="btn">Mulai Absen Siswa</button>
+        </section>`;
+      }).join('');
+    }
+
+    function kirimCatatan(idKelas, hari, btn) {
+      const p = document.getElementById('cat-' + idKelas + '-p'), q = document.getElementById('cat-' + idKelas + '-s');
+      if (!p || !q) return;
+      btn.disabled = true; btn.textContent = 'Mengirim…';
+      google.script.run
+        .withSuccessHandler(res => { btn.disabled = false; btn.textContent = 'Kirim catatan'; popup(res.message, 'ok'); })
+        .withFailureHandler(err => { btn.disabled = false; btn.textContent = 'Kirim catatan'; popup(err.message, 'err', 'Gagal mengirim catatan'); })
+        .simpanCatatan({ id_sensei: currentSensei.id, id_kelas: idKelas, hari_ke: hari, pagi: p.value, siang: q.value });
+    }
+
+    // ---------- absensi ----------
+    function fillKelasSelect() {
+      const sel = document.getElementById('selectKelasAbsen');
+      sel.innerHTML = '<option value="">Pilih kelas</option>' + kelasSaya.map(k =>
+        `<option value="${esc(k.id_kelas)}">${esc(k.nama_kelas)} (${esc(k.group || k.wilayah)})</option>`).join('');
+    }
+
+    function startAbsen(idKelas) {
+      document.getElementById('selectKelasAbsen').value = idKelas;
+      sesiAktif = sesiHome;
+      sesiTerisi = {};
+      document.getElementById('tanggalAbsen').value = todayLocal();
+      showPage('absen');
+      loadSiswaAbsen();
+    }
+
+    const STATUS = [
+      { k: 'H',  v: 'Hadir',       c: 'c-h' },
+      { k: 'I',  v: 'Izin',        c: 'c-i' },
+      { k: 'S',  v: 'Sakit',       c: 'c-s' },
+      { k: 'TK', v: 'Tidak Hadir', c: 'c-t' }
+    ];
+    let daftarSiswa = [];
+    let absenState = {};
+    let absenBatch = '';
+    const BATCH_KOSONG = '(tanpa batch)';
+    const batchDari = s => s.batch || BATCH_KOSONG;
+
+    function loadSiswaAbsen() {
+      const idKelas = document.getElementById('selectKelasAbsen').value;
+      const tanggal = document.getElementById('tanggalAbsen').value;
+      const cont = document.getElementById('siswaAbsenContainer');
+      const info = document.getElementById('absenInfo');
+      if (!idKelas || !tanggal) { cont.classList.add('hidden'); info.classList.add('hidden'); return; }
+
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.libur) {
+            info.textContent = 'Tanggal ini libur (' + res.libur + '). Absensi tidak bisa diisi.';
+            info.classList.remove('hidden');
+            cont.classList.add('hidden');
+            return;
+          }
+          if (!res.siswa.length) {
+            info.textContent = res.alasan || 'Belum ada siswa untuk kelas ini.';
+            info.classList.remove('hidden');
+            cont.classList.add('hidden');
+            return;
+          }
+          daftarSiswa = res.siswa;
+          const daftarBatch = batchList();
+          if (daftarBatch.indexOf(absenBatch) < 0) absenBatch = daftarBatch[0];
+          sesiTerisi = res.terisi || {};
+          absenState = {};
+          res.siswa.forEach(s => { if (s.status) absenState[s.id_siswa] = s.status; });
+          if (res.sudah_ada) {
+            info.textContent = 'Absensi tanggal ini sudah tersimpan. Menyimpan lagi akan menggantinya.';
+            info.classList.remove('hidden');
+          } else {
+            info.classList.add('hidden');
+          }
+          renderSiswaAbsen();
+          cont.classList.remove('hidden');
+        })
+        .withFailureHandler(err => popup(err.message, 'err', 'Gagal memuat siswa'))
+        .getSiswaAbsen(idKelas, tanggal, sesiAktif);
+    }
+
+    function batchList() {
+      return [...new Set(daftarSiswa.map(batchDari))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    }
+    function siswaBatch() {
+      return daftarSiswa.filter(s => batchDari(s) === absenBatch);
+    }
+    function setBatch(b) {
+      absenBatch = b;
+      renderSiswaAbsen();
+    }
+
+    function renderSiswaAbsen() {
+      const list = siswaBatch();
+      renderTabSesi();
+      const info = document.getElementById('absenInfo');
+      if ((sesiTerisi[absenBatch] || {})[sesiAktif]) {
+        info.textContent = 'Absensi ' + sesiAktif + (batchList().length > 1 ? ' ' + absenBatch : '') + ' tanggal ini sudah tersimpan. Menyimpan lagi akan menggantinya.';
+        info.classList.remove('hidden');
+      } else {
+        info.classList.add('hidden');
+      }
+
+      // tombol batch (disembunyikan kalau hanya ada satu batch)
+      const bl = batchList();
+      document.getElementById('batchTabs').innerHTML = bl.length < 2 ? '' : bl.map(b => {
+        const isi = daftarSiswa.filter(s => batchDari(s) === b);
+        const lengkap = isi.every(s => absenState[s.id_siswa]);
+        const on = b === absenBatch;
+        return `<button type="button" data-b="${esc(b)}" onclick="setBatch(this.dataset.b)" aria-pressed="${on}"
+                  class="${on ? 'sesi-on' : 'chip'} px-4 py-2 rounded-full text-sm font-bold" style="${on ? '' : 'cursor:pointer'}">
+                  ${esc(b)} <span class="opacity-80 font-semibold">· ${isi.length}</span>${lengkap ? ' ✓' : ''}</button>`;
+      }).join('');
+
+      document.getElementById('daftarSiswaAbsen').innerHTML = list.map(s => {
+        const aktif = absenState[s.id_siswa];
+        const tombol = STATUS.map(st => `
+          <button type="button" onclick="pilihStatus('${esc(s.id_siswa)}','${st.v}')" aria-pressed="${aktif === st.v}"
+                  class="sb ${st.c} ${aktif === st.v ? 'on' : ''} w-11 h-10 rounded-lg text-sm font-bold">${st.k}</button>`).join('');
+        return `
+          <div class="flex items-center gap-2 px-4 py-3 border-t">
+            <span class="flex-1 text-sm sm:text-base leading-snug">${esc(s.nama_siswa)}</span>
+            <div class="flex gap-1.5">${tombol}</div>
+          </div>`;
+      }).join('');
+
+      const n = v => list.filter(s => absenState[s.id_siswa] === v).length;
+      const belum = list.filter(s => !absenState[s.id_siswa]).length;
+      document.getElementById('ringkasanAbsen').textContent =
+        (bl.length > 1 ? absenBatch + ' · ' : '') + 'H ' + n('Hadir') + ' · I ' + n('Izin') + ' · S ' + n('Sakit') + ' · TK ' + n('Tidak Hadir') +
+        (belum ? ' · belum dipilih ' + belum : '');
+    }
+
+    function pilihStatus(idSiswa, status) {
+      absenState[idSiswa] = status;
+      renderSiswaAbsen();
+    }
+
+    function setAllStatus(status) {
+      siswaBatch().forEach(s => { absenState[s.id_siswa] = status; });
+      renderSiswaAbsen();
+    }
+
+    function simpanAbsensi() {
+      const idKelas = document.getElementById('selectKelasAbsen').value;
+      const tanggal = document.getElementById('tanggalAbsen').value;
+      if (!idKelas || !tanggal) { popup('Pilih kelas dan tanggal terlebih dahulu.', 'info'); return; }
+
+      const list = siswaBatch();
+      if (!list.length) { popup('Tidak ada siswa di batch ini.', 'info'); return; }
+      const belum = list.filter(s => !absenState[s.id_siswa]);
+      if (belum.length) { popup('Masih ada ' + belum.length + ' siswa yang belum dipilih:\n' + belum.map(s => s.nama_siswa).join('\n'), 'info', 'Absensi belum lengkap'); return; }
+      const dataSiswa = list.map(s => ({ id_siswa: s.id_siswa, nama: s.nama_siswa, status: absenState[s.id_siswa] }));
+
+      const btn = document.getElementById('btnSimpan');
+      btn.disabled = true; btn.textContent = 'Menyimpan…';
+
+      google.script.run
+        .withSuccessHandler(res => {
+          btn.disabled = false; btn.textContent = 'Simpan absensi';
+          loadHome();
+          loadSiswaAbsen();
+          showPage('home');
+          popup(res.message, 'ok');
+        })
+        .withFailureHandler(err => {
+          btn.disabled = false; btn.textContent = 'Simpan absensi';
+          popup(err.message, 'err', 'Gagal menyimpan');
+        })
+        .simpanAbsensi({
+          tanggal: tanggal,
+          id_kelas: idKelas,
+          sesi: sesiAktif,
+          id_sensei: currentSensei.id,
+          dataSiswa: dataSiswa
+        });
+    }

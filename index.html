@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Joy Progress Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>try{var t=localStorage.getItem('joy_theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.classList.add('dark')}catch(e){}</script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="min-h-screen">
+
+  <!-- LOGIN / BUAT AKUN / GANTI PASSWORD -->
+  <div id="loginScreen" class="min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+      <div class="text-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-800">Joy Progress</h1>
+        <p class="text-gray-500 mt-2">Monitor Kurikulum &amp; Absensi</p>
+      </div>
+
+      <div class="flex justify-center gap-1 mb-6 border-b" style="border-color:var(--line)">
+        <button type="button" id="tab-login" onclick="showAuth('login')" class="auth-tab active">Masuk</button>
+        <button type="button" id="tab-daftar" onclick="showAuth('daftar')" class="auth-tab">Buat Akun</button>
+        <button type="button" id="tab-ganti" onclick="showAuth('ganti')" class="auth-tab">Ganti Password</button>
+      </div>
+
+      <!-- MASUK -->
+      <div id="panel-login" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">ID Sensei</label>
+          <input type="text" id="inputIdSensei" placeholder="Contoh: JCBDG001" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+          <div class="relative">
+            <input type="password" id="inputPassword" placeholder="Password"
+                   class="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+            <button type="button" class="pw-toggle" onclick="togglePw('inputPassword', this)" aria-label="Lihat password"></button>
+          </div>
+        </div>
+        <button id="btnLogin" onclick="doLogin()"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition">Masuk</button>
+        <p id="loginError" class="text-red-500 text-sm text-center hidden"></p>
+        <p class="text-xs text-gray-500 text-center">Belum punya akun? Pilih tab Buat Akun.</p>
+      </div>
+
+      <!-- BUAT AKUN -->
+      <div id="panel-daftar" class="hidden">
+        <div id="daftarForm" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Nama</label>
+            <input type="text" id="daftarNama" placeholder="Nama lengkap" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Cabang</label>
+            <select id="daftarCabang" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+              <option value="">Pilih cabang</option>
+              <option>Tangerang (BSD)</option>
+              <option>Bandung</option>
+              <option>Brebes</option>
+              <option>Cirebon</option>
+              <option>Semarang</option>
+              <option>Sukabumi</option>
+              <option>Tegal</option>
+              <option>Yogyakarta</option>
+              <option>Manado</option>
+            </select>
+          </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+          <div class="relative">
+            <input type="password" id="daftarPassword" placeholder="Minimal 6 karakter"
+                   class="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+            <button type="button" class="pw-toggle" onclick="togglePw('daftarPassword', this)" aria-label="Lihat password"></button>
+          </div>
+        </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Group</label>
+            <select id="daftarGroup" onchange="toggleGroupLain()" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+              <option value="">Pilih group</option>
+              <option>Joycare</option>
+              <option>Joybridge</option>
+              <option>Joygreen</option>
+              <option>Joyserve</option>
+              <option value="__lainnya">Lainnya...</option>
+            </select>
+            <input type="text" id="daftarGroupLain" placeholder="Tulis nama group" maxlength="40"
+                   class="hidden mt-2 w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+          </div>
+          <button id="btnDaftar" onclick="doDaftar()"
+                  class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition">Buat Akun</button>
+          <p id="daftarError" class="text-sm text-center hidden"></p>
+        </div>
+
+        <div id="daftarSukses" class="hidden text-center space-y-3">
+          <p class="font-semibold" style="color:var(--h)">Akun berhasil dibuat dan sudah aktif.</p>
+          <p class="text-sm text-gray-500">ID Sensei kamu:</p>
+          <p id="daftarIdBaru" class="text-3xl font-extrabold tracking-wider text-gray-800"></p>
+          <p class="text-xs text-gray-500">Catat ID ini. Kamu memerlukannya untuk masuk.</p>
+          <button onclick="keLoginDenganId()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition">Lanjut ke Masuk</button>
+        </div>
+      </div>
+
+      <!-- GANTI PASSWORD -->
+      <div id="panel-ganti" class="hidden space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">ID Sensei</label>
+          <input type="text" id="gantiId" placeholder="Contoh: JCBDG001" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Password lama</label>
+          <div class="relative">
+            <input type="password" id="gantiLama" placeholder="Password lama"
+                   class="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+            <button type="button" class="pw-toggle" onclick="togglePw('gantiLama', this)" aria-label="Lihat password"></button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Password baru</label>
+          <div class="relative">
+            <input type="password" id="gantiBaru" placeholder="Minimal 6 karakter"
+                   class="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+            <button type="button" class="pw-toggle" onclick="togglePw('gantiBaru', this)" aria-label="Lihat password"></button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Ulangi password baru</label>
+          <div class="relative">
+            <input type="password" id="gantiUlang" placeholder="Ulangi password baru"
+                   class="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+            <button type="button" class="pw-toggle" onclick="togglePw('gantiUlang', this)" aria-label="Lihat password"></button>
+          </div>
+        </div>
+        <button id="btnGanti" onclick="doGantiPassword()"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition">Ganti Password</button>
+        <p id="gantiMsg" class="text-sm text-center hidden"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div id="mainApp" class="hidden">
+    <div id="overlay" onclick="toggleSidebar(false)" class="fixed inset-0 z-40 bg-black/40 hidden"></div>
+
+    <aside id="sidebar" class="sidebar" aria-label="Menu utama">
+      <div class="px-2 pb-4 text-xl font-extrabold" style="color:var(--ac)">Joy Progress</div>
+      <button id="nav-home" onclick="showPage('home')" class="navbtn active"><span data-ic="home"></span>Home</button>
+      <button id="nav-kelas" onclick="toggleKelasMenu()" class="navbtn" aria-expanded="false"><span data-ic="users"></span>Kelas<span id="kelasChev" class="ml-auto"></span></button>
+      <div id="kelasSub" class="hidden shrink-0 space-y-0.5 pl-6 pr-1 pb-1"></div>
+      <button id="nav-absen" onclick="showPage('absen')" class="navbtn"><span data-ic="check"></span>Absen</button>
+      <button id="nav-rekap" onclick="toggleRekapMenu()" class="navbtn" aria-expanded="false"><span data-ic="chart"></span>Rekap Absen<span id="rekapChev" class="ml-auto"></span></button>
+      <div id="rekapSub" class="hidden shrink-0 space-y-0.5 pl-6 pr-1 pb-1"></div>
+      <button id="nav-nilai" onclick="toggleNilaiMenu()" class="navbtn" aria-expanded="false"><span data-ic="note"></span>Rekap Nilai<span id="nilaiChev" class="ml-auto"></span></button>
+      <div id="nilaiSub" class="hidden shrink-0 space-y-0.5 pl-6 pr-1 pb-1"></div>
+      <button id="nav-raport" onclick="toggleRaportMenu()" class="navbtn" aria-expanded="false"><span data-ic="award"></span>Raport Siswa<span id="raportChev" class="ml-auto"></span></button>
+      <div id="raportSub" class="hidden shrink-0 space-y-0.5 pl-6 pr-1 pb-1"></div>
+      <button id="nav-kurikulum" onclick="showPage('kurikulum')" class="navbtn"><span data-ic="book"></span>Kurikulum</button>
+      <button id="nav-timeline" onclick="showPage('timeline')" class="navbtn"><span data-ic="cal"></span>Timeline</button>
+      <div class="mt-auto space-y-1 pt-4" style="border-top:1px solid var(--line)">
+        <div class="flex items-center gap-3 px-2 py-2">
+          <div id="sbAvatar" class="w-9 h-9 rounded-full flex items-center justify-center font-bold" style="background:var(--acs);color:var(--ac)"></div>
+          <div class="min-w-0"><p id="sbNama" class="font-semibold text-sm truncate"></p><p class="muted text-xs">Sensei</p></div>
+        </div>
+        <button onclick="toggleTheme()" class="navbtn"><span class="themeIc"></span><span class="themeLb"></span></button>
+        <button onclick="logout()" class="navbtn"><span data-ic="out"></span>Keluar</button>
+      </div>
+    </aside>
+
+    <!-- tombol sembunyikan/tampilkan menu (desktop) -->
+    <button id="sbToggle" class="sbtoggle" onclick="toggleSidebarDesktop()" aria-label="Sembunyikan menu" aria-expanded="true" title="Sembunyikan / tampilkan menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+
+    <div id="contentWrap" class="lg:pl-64">
+      <header class="topbar lg:hidden">
+        <button onclick="toggleSidebar(true)" aria-label="Buka menu" class="p-1"><span data-ic="menu"></span></button>
+        <span class="font-extrabold" style="color:var(--ac)">Joy Progress</span>
+        <button onclick="toggleTheme()" aria-label="Ganti tema" class="ml-auto p-1"><span class="themeIc"></span></button>
+      </header>
+      <main id="mainWrap" class="max-w-3xl mx-auto px-4 py-6">
+
+      <!-- HOME -->
+      <div id="page-home" class="space-y-6">
+        <section class="hero">
+          <p class="text-lg font-semibold">Selamat datang</p>
+          <p class="mt-1"><span id="welcomeName" class="text-3xl sm:text-4xl font-extrabold"></span> <span class="text-lg muted">Sensei</span></p>
+          <p class="mt-3 muted">本日もよろしくお願いいたします。</p>
+        </section>
+        <div id="kelasList" class="space-y-6"><p class="muted text-center py-8">Memuat data kelas…</p></div>
+      </div>
+
+      <!-- ABSEN -->
+      <div id="page-absen" class="hidden space-y-5">
+        <div class="bg-white rounded-2xl shadow p-5">
+          <h2 class="text-xl font-bold mb-4">Absensi Siswa</h2>
+
+          <div class="grid sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-sm font-medium mb-1">Kelas</label>
+              <select id="selectKelasAbsen" onchange="loadSiswaAbsen()" class="w-full border border-gray-300 rounded-lg px-3 py-2.5">
+                <option value="">Pilih kelas</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Tanggal</label>
+              <input type="date" id="tanggalAbsen" onchange="loadSiswaAbsen()" class="w-full border border-gray-300 rounded-lg px-3 py-2.5">
+            </div>
+          </div>
+
+          <p id="absenInfo" class="hidden text-sm text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mb-4"></p>
+
+          <div id="siswaAbsenContainer" class="hidden">
+            <div id="batchTabs" class="flex flex-wrap gap-2 mb-3"></div>
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <p id="ringkasanAbsen" class="text-sm text-gray-600"></p>
+              <div class="inline-flex shrink-0 rounded-full border bg-white p-0.5" role="group" aria-label="Sesi">
+                <button type="button" id="tabSesi0" onclick="setSesi('午前')"></button>
+                <button type="button" id="tabSesi1" onclick="setSesi('午後')"></button>
+              </div>
+            </div>
+            <div class="border rounded-xl overflow-hidden">
+              <div class="flex items-center gap-2 px-4 py-2 bg-gray-50 text-sm font-semibold text-gray-700">
+                <span class="flex-1">Nama siswa</span>
+                <div class="flex gap-1.5">
+                  <span class="w-11 text-center">H</span><span class="w-11 text-center">I</span><span class="w-11 text-center">S</span><span class="w-11 text-center">TK</span>
+                </div>
+              </div>
+              <div id="daftarSiswaAbsen"></div>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">H = Hadir · I = Izin · S = Sakit · TK = Tanpa keterangan</p>
+
+            <div class="mt-4 flex gap-3">
+              <button onclick="setAllStatus('Hadir')" class="px-4 py-2 bg-green-100 text-green-700 rounded-lg text-sm">Semua hadir</button>
+              <button id="btnSimpan" onclick="simpanAbsensi()" class="ml-auto bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium">Simpan absensi</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KELAS -->
+      <div id="page-kelas" class="hidden space-y-6">
+        <div id="kelasIsi"><div class="card muted text-center py-10">Pilih kelas dan batch di menu Kelas</div></div>
+      </div>
+
+      <div id="page-nilai" class="hidden space-y-6">
+        <div id="nilaiIsi"><div class="card muted text-center py-10">Pilih kelas dan batch di menu Rekap Nilai</div></div>
+      </div>
+      <div id="page-raport" class="hidden space-y-6">
+        <div id="raportIsi"><div class="card muted text-center py-10">Pilih kelas dan batch di menu Raport</div></div>
+      </div>
+      <div id="page-rekap" class="hidden space-y-6">
+        <div id="rekapIsi"><div class="card muted text-center py-10">Pilih kelas dan batch di menu Rekap Absen</div></div>
+      </div>
+      <div id="page-kurikulum" class="hidden space-y-6">
+        <div id="kurikulumIsi"><div class="card muted text-center py-10">Memuat kurikulum…</div></div>
+      </div>
+      <div id="page-timeline" class="hidden space-y-6">
+        <div id="timelineIsi"><div class="card muted text-center py-10">Memuat timeline…</div></div>
+      </div>
+    </main>
+    </div>
+  </div>
+
+  <!-- AREA CETAK RAPORT (hanya tampil saat print) -->
+  <div id="raportPrint"></div>
+
+  <!-- POP-UP -->
+  <div id="popup" class="hidden fixed inset-0 items-center justify-center p-4" style="z-index:100" role="dialog" aria-modal="true" aria-labelledby="popupJudul">
+    <div class="absolute inset-0" style="background:rgba(4,12,11,.6);backdrop-filter:blur(2px)" onclick="tutupPopup()"></div>
+    <div class="card relative w-full text-center" style="max-width:24rem;box-shadow:0 24px 60px -20px rgba(0,0,0,.6)">
+      <div id="popupIc" class="mx-auto mb-3 w-14 h-14 rounded-full flex items-center justify-center"></div>
+      <h3 id="popupJudul" class="text-lg font-extrabold"></h3>
+      <p id="popupPesan" class="muted text-sm mt-2 whitespace-pre-line" style="max-height:14rem;overflow:auto"></p>
+      <button id="popupOk" type="button" onclick="tutupPopup()" class="btn mt-5">OK</button>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
